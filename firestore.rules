@@ -1,0 +1,198 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function emailVerified() { return request.auth.token.email_verified == true; }
+    
+    // User Roles (utilizing get() with safety checks)
+    
+    function isSuperadmin() {
+      return isSignedIn() && 
+             "email" in request.auth.token && 
+             request.auth.token.email.lower() == 'fahrizpalderama.design@gmail.com';
+    }
+    
+    function isAdmin() { 
+      return isSignedIn() && (
+        isSuperadmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('type', 'none') in ['Admin', 'Superadmin'])
+      ); 
+    }
+    
+    function hasRole(role) { 
+      return isSignedIn() && (
+        (isSuperadmin() && (role == 'Admin' || role == 'Superadmin')) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('type', 'none') == role)
+      ); 
+    }
+    function isTeknis() { return hasRole('Teknis'); }
+
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // --- Validation Blueprints ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'type']) 
+        && data.keys().size() == 4
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 100
+        && data.type in ['Superadmin', 'Admin', 'Teknis', 'Report'];
+    }
+
+    function isValidAsset(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.code is string && data.code.size() > 0 && data.code.size() <= 50
+        && data.condition in ['Baru', 'Bekas']
+        && (!data.keys().hasAll(['status']) || data.status in ['Normal', 'Emergency', 'Maintenance'])
+        && (!data.keys().hasAll(['price']) || data.price is number)
+        && (!data.keys().hasAll(['category']) || data.category is string)
+        && (!data.keys().hasAll(['ownership']) || data.ownership is string)
+        && (!data.keys().hasAll(['priority']) || data.priority is string)
+        && (!data.keys().hasAll(['photo']) || (data.photo is string && data.photo.size() <= 1000000));
+    }
+
+    function isValidVendor(data) {
+      return data.keys().hasAll(['name', 'type'])
+        && data.type in ['Service', 'Procurement']
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && (!data.keys().hasAny(['companyName']) || data.companyName is string)
+        && (!data.keys().hasAny(['whatsapp']) || data.whatsapp is string)
+        && (!data.keys().hasAny(['socialMedia']) || data.socialMedia is string)
+        && (!data.keys().hasAny(['category']) || data.category is string)
+        && (!data.keys().hasAny(['description']) || data.description is string)
+        && data.keys().size() <= 12;
+    }
+
+    function isValidReport(data) {
+      let requiredKeys = ['outlet', 'placement', 'name', 'code', 'issue', 'desc', 'photo', 'reporter', 'timestamp', 'status', 'category', 'priority'];
+      let hasRequired = data.keys().hasAll(requiredKeys);
+      let isPending = data.status == 'pending' && data.keys().size() == 12;
+      let isResolved = data.status == 'resolved' && data.keys().hasAll(['solverInfo']) && data.keys().size() == 13;
+      
+      return hasRequired && (isPending || isResolved)
+        && data.outlet is string && data.issue is string && data.category is string && data.priority is string
+        && data.photo is string && data.photo.size() <= 1000000; // Allow 1MB
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['name']) && data.keys().size() == 1
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100;
+    }
+
+    function isValidProcurement(data) {
+      return data.keys().hasAll(['itemName', 'quantity', 'unit', 'description', 'category', 'pricePerUnit', 'outlet', 'procurementVia', 'totalPrice', 'timestamp', 'createdBy', 'photo'])
+        && data.keys().size() == 12
+        && data.itemName is string && data.itemName.size() > 0
+        && data.quantity is number && data.quantity >= 0
+        && data.unit is string
+        && data.description is string
+        && data.category is string
+        && data.pricePerUnit is number && data.pricePerUnit >= 0
+        && data.outlet is string
+        && data.procurementVia is string
+        && data.totalPrice is number && data.totalPrice >= 0
+        && data.timestamp is string && data.createdBy is string
+        && data.photo is string;
+    }
+
+    // --- Matches ---
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && isOwner(userId) && isValidUser(incoming()) && incoming().uid == request.auth.uid;
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming()) 
+        && (isAdmin() || (incoming().uid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['name'])));
+      allow delete: if isAdmin() && userId != request.auth.uid;
+    }
+
+    match /assets/{assetId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidAsset(incoming()) 
+        && incoming().keys().hasAll(['name', 'code', 'condition', 'placement', 'outlet', 'date', 'verifier', 'photo', 'price', 'category']);
+      allow update: if (isAdmin() || isTeknis()) 
+        && isValidAsset(incoming())
+        && (isAdmin() || incoming().diff(existing()).affectedKeys().hasOnly(['status']));
+      allow delete: if isAdmin();
+    }
+
+    match /reports/{reportId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidReport(incoming()) 
+        && incoming().status == 'pending'
+        && incoming().reporter == (exists(/databases/$(database)/documents/users/$(request.auth.uid)) ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('name', 'Anonymous') : 'Anonymous'); // Relational integrity check
+      
+      allow update: if (isAdmin() || isTeknis()) 
+        && isValidReport(incoming())
+        && existing().status == 'pending' // Prevent state shortcuts or re-resolving
+        && incoming().status == 'resolved'
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'solverInfo']);
+    }
+
+    match /category_outlets/{catId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidCategory(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /category_placements/{catId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidCategory(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /category_vendors/{catId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidCategory(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /category_ownerships/{catId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidCategory(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /category_priorities/{catId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidCategory(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /vendors_service/{vendorId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidVendor(incoming());
+      allow update: if isAdmin() && isValidVendor(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /vendors_procurement/{vendorId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidVendor(incoming());
+      allow update: if isAdmin() && isValidVendor(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /asset_activities/{activityId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    match /procurements/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidProcurement(incoming());
+      allow delete: if isAdmin();
+    }
+  }
+}

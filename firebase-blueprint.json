@@ -1,0 +1,190 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and role information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "type": { "type": "string", "enum": ["Admin", "Teknis", "Report"] }
+      },
+      "required": ["name", "email", "type"]
+    },
+    "Asset": {
+      "title": "Asset",
+      "description": "Inventory asset record",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "condition": { "type": "string" },
+        "placement": { "type": "string" },
+        "outlet": { "type": "string" },
+        "date": { "type": "string" },
+        "verifier": { "type": "string" },
+        "photo": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "ownership": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string", "enum": ["Normal", "Emergency", "Maintenance"] }
+      },
+      "required": ["name", "code", "condition", "placement", "outlet", "date", "verifier", "photo", "price", "category"]
+    },
+    "Vendor": {
+      "title": "Vendor",
+      "description": "Service or Procurement vendor information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "companyName": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "socialMedia": { "type": "string" },
+        "category": { "type": "string" },
+        "type": { "type": "string", "enum": ["Service", "Procurement"] }
+      },
+      "required": ["name", "companyName", "whatsapp", "socialMedia", "category", "type"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Emergency repair report",
+      "type": "object",
+      "properties": {
+        "outlet": { "type": "string" },
+        "placement": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "issue": { "type": "string" },
+        "desc": { "type": "string" },
+        "photo": { "type": "string" },
+        "reporter": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "category": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "resolved"] },
+        "solverInfo": {
+          "type": "object",
+          "properties": {
+            "verifier": { "type": "string" },
+            "desc": { "type": "string" },
+            "photo": { "type": "string" },
+            "resolvedAt": { "type": "string" }
+          }
+        }
+      },
+      "required": ["outlet", "placement", "name", "code", "issue", "desc", "photo", "reporter", "timestamp", "status"]
+    },
+    "CategoryOutlet": {
+      "title": "Category Outlet",
+      "description": "Outlet location category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "CategoryPlacement": {
+      "title": "Category Placement",
+      "description": "Asset placement category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "ProcurementRecord": {
+      "title": "Procurement Record",
+      "description": "New item procurement record",
+      "type": "object",
+      "properties": {
+        "itemName": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "pricePerUnit": { "type": "number" },
+        "outlet": { "type": "string" },
+        "procurementVia": { "type": "string" },
+        "totalPrice": { "type": "number" },
+        "timestamp": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "photo": { "type": "string" }
+      },
+      "required": ["itemName", "quantity", "unit", "description", "category", "pricePerUnit", "outlet", "procurementVia", "totalPrice", "timestamp", "createdBy", "photo"]
+    },
+    "CategoryVendor": {
+      "title": "Category Vendor",
+      "description": "Vendor category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "CategoryOwnership": {
+      "title": "Category Ownership",
+      "description": "Asset ownership category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "CategoryPriority": {
+      "title": "Category Priority",
+      "description": "Asset priority category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/assets/{assetId}": {
+      "schema": "Asset",
+      "description": "Inventory items"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Emergency reports"
+    },
+    "/category_outlets/{catId}": {
+      "schema": "CategoryOutlet",
+      "description": "Outlet location categories"
+    },
+    "/category_placements/{catId}": {
+      "schema": "CategoryPlacement",
+      "description": "Asset placement categories"
+    },
+    "/vendors_service/{vendorId}": {
+      "schema": "Vendor",
+      "description": "Service vendors"
+    },
+    "/vendors_procurement/{vendorId}": {
+      "schema": "Vendor",
+      "description": "Procurement vendors"
+    },
+    "/procurements/{id}": {
+      "schema": "ProcurementRecord",
+      "description": "Procurement records"
+    },
+    "/category_vendors/{catId}": {
+      "schema": "CategoryVendor",
+      "description": "Vendor categories"
+    },
+    "/category_ownerships/{catId}": {
+      "schema": "CategoryOwnership",
+      "description": "Asset ownership categories"
+    },
+    "/category_priorities/{catId}": {
+      "schema": "CategoryPriority",
+      "description": "Asset priority categories"
+    }
+  }
+}

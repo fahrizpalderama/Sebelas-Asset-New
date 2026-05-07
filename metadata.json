@@ -1,0 +1,8 @@
+{
+  "name": "Sebelas Asset Management App",
+  "description": "Sebelas Asset Management App - Integrated asset management system with emergency reporting and inventory tracking.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
