@@ -38,6 +38,7 @@ import {
   Edit,
   Trash2,
   Save,
+  Image as ImageIcon,
   CheckCircle,
   PlusCircle,
   Download,
@@ -2361,20 +2362,40 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.photoLabel}</label>
               <input type="file" id="assetPhotoInput" className="hidden" accept="image/*" onChange={e => handlePhotoUpload(e, (val: string) => setAssetForm({...assetForm, photo: val}))} />
-              <label htmlFor="assetPhotoInput" className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-200 dark:border-white/10 rounded-[28px] cursor-pointer hover:bg-dashboard-bg dark:hover:bg-white/5 transition-all group overflow-hidden relative">
+              <input type="file" id="assetCameraInput" className="hidden" accept="image/*" capture="environment" onChange={e => handlePhotoUpload(e, (val: string) => setAssetForm({...assetForm, photo: val}))} />
+              
+              <div className="w-full h-32 border-2 border-dashed border-slate-200 dark:border-white/10 rounded-[28px] overflow-hidden relative bg-slate-50/50 dark:bg-white/2 transition-all">
                 {assetForm.photo ? (
-                  <img src={assetForm.photo} alt="Preview" className="w-full h-full object-cover" />
+                  <div className="relative w-full h-full group">
+                    <img src={assetForm.photo} alt="Preview" className="w-full h-full object-cover" />
+                    <button 
+                      type="button"
+                      onClick={() => setAssetForm({...assetForm, photo: ''})}
+                      className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 ) : (
-                  <>
-                    <Camera className="w-8 h-8 text-slate-300 group-hover:text-accent-brown transition-colors" />
-                    <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase">{t.photoPlc}</p>
-                  </>
+                  <div className="flex w-full h-full">
+                    <label htmlFor="assetPhotoInput" className="flex-1 flex flex-col items-center justify-center cursor-pointer hover:bg-dashboard-bg dark:hover:bg-white/5 transition-all group border-r border-slate-100 dark:border-white/5">
+                      <ImageIcon className="w-6 h-6 text-slate-300 group-hover:text-accent-brown transition-colors" />
+                      <p className="text-[9px] font-bold text-slate-400 mt-2 uppercase tracking-tight">{lang === 'id' ? 'Galeri' : 'Gallery'}</p>
+                    </label>
+                    <label htmlFor="assetCameraInput" className="flex-1 flex flex-col items-center justify-center cursor-pointer hover:bg-dashboard-bg dark:hover:bg-white/5 transition-all group">
+                      <Camera className="w-6 h-6 text-slate-300 group-hover:text-accent-brown transition-colors" />
+                      <p className="text-[9px] font-bold text-slate-400 mt-2 uppercase tracking-tight">{lang === 'id' ? 'Kamera' : 'Camera'}</p>
+                    </label>
+                  </div>
                 )}
-              </label>
+              </div>
             </div>
           </div>
         </div>
-        <button type="submit" className="w-full bg-accent-brown text-white py-5 rounded-[28px] font-bold shadow-xl shadow-accent-brown/20 hover:bg-accent-tan transition-all transform active:scale-[0.98] mt-4 uppercase text-xs tracking-widest">{t.save}</button>
+        <button type="submit" className="w-full bg-[#10b981] hover:bg-[#059669] text-white py-5 rounded-[28px] font-bold shadow-xl shadow-emerald-500/20 transition-all transform active:scale-[0.98] mt-4 uppercase text-xs tracking-widest flex items-center justify-center gap-2">
+          <CheckCircle className="w-4 h-4" />
+          {t.save}
+        </button>
       </form>
     </div>
   );
