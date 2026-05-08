@@ -17,6 +17,7 @@ export interface Asset {
   date: string;
   verifier: string;
   photo: string;
+  description?: string;
   price: number;
   category?: string;
   ownership?: string;

@@ -24,6 +24,7 @@
         "date": { "type": "string" },
         "verifier": { "type": "string" },
         "photo": { "type": "string" },
+        "description": { "type": "string" },
         "price": { "type": "number" },
         "category": { "type": "string" },
         "ownership": { "type": "string" },

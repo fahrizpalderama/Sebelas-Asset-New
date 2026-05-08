@@ -1007,6 +1007,7 @@ export default function App() {
         date: assetForm.date || '',
         verifier: assetForm.verifier || '',
         photo: assetForm.photo || '',
+        description: assetForm.description || '',
         price: Number(assetForm.price) || 0,
         category: assetForm.category || '',
         ownership: assetForm.ownership || '',
@@ -2354,6 +2355,10 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
               <input type="text" value={assetForm.verifier || ''} onChange={e => setAssetForm({...assetForm, verifier: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all" placeholder={lang === 'id' ? "Nama lengkap petugas" : "Petitioner full name"} required />
             </div>
             <div className="space-y-2">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Deskripsi' : 'Description'}</label>
+              <textarea value={assetForm.description || ''} onChange={e => setAssetForm({...assetForm, description: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all min-h-[100px] resize-none" placeholder={lang === 'id' ? "Tambahkan spesifikasi atau catatan tambahan aset..." : "Add asset specification or additional notes..."} />
+            </div>
+            <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.photoLabel}</label>
               <input type="file" id="assetPhotoInput" className="hidden" accept="image/*" onChange={e => handlePhotoUpload(e, (val: string) => setAssetForm({...assetForm, photo: val}))} />
               <label htmlFor="assetPhotoInput" className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-200 dark:border-white/10 rounded-[28px] cursor-pointer hover:bg-dashboard-bg dark:hover:bg-white/5 transition-all group overflow-hidden relative">
@@ -2489,6 +2494,11 @@ const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, set
                      <span className="px-2 py-1 bg-accent-brown/5 dark:bg-accent-brown/20 text-accent-brown dark:text-accent-tan text-[8px] font-black uppercase rounded-md border border-accent-brown/10">{item.category}</span>
                      <span className="px-2 py-1 bg-slate-100 dark:bg-white/5 text-slate-400 text-[8px] font-black uppercase rounded-md border border-slate-200/50 dark:border-white/5">{item.ownership || 'Private'}</span>
                    </div>
+                   {item.description && (
+                     <p className="mt-3 text-[10px] text-slate-500 dark:text-slate-400 font-medium line-clamp-2 italic">
+                       "{item.description}"
+                     </p>
+                   )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
