@@ -61,7 +61,7 @@ export interface Report {
 export interface AssetActivity {
   id?: string;
   assetCode: string;
-  type: "Created" | "Emergency" | "Resolved";
+  type: "Created" | "Emergency" | "Resolved" | "Edited";
   description: string;
   user: string;
   timestamp: string;

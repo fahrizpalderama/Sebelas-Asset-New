@@ -140,6 +140,20 @@
         "name": { "type": "string" }
       },
       "required": ["name"]
+    },
+    "AssetActivity": {
+      "title": "Asset Activity",
+      "description": "Log of asset-related activities",
+      "type": "object",
+      "properties": {
+        "assetCode": { "type": "string" },
+        "type": { "type": "string", "enum": ["Created", "Emergency", "Resolved", "Edited"] },
+        "description": { "type": "string" },
+        "user": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "reportId": { "type": "string" }
+      },
+      "required": ["assetCode", "type", "description", "user", "timestamp"]
     }
   },
   "firestore": {
@@ -186,6 +200,10 @@
     "/category_priorities/{catId}": {
       "schema": "CategoryPriority",
       "description": "Asset priority categories"
+    },
+    "/asset_activities/{activityId}": {
+      "schema": "AssetActivity",
+      "description": "Log of activities"
     }
   }
 }

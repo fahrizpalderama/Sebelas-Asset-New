@@ -58,6 +58,11 @@ service cloud.firestore {
         && (!data.keys().hasAll(['category']) || data.category is string)
         && (!data.keys().hasAll(['ownership']) || data.ownership is string)
         && (!data.keys().hasAll(['priority']) || data.priority is string)
+        && (!data.keys().hasAll(['placement']) || data.placement is string)
+        && (!data.keys().hasAll(['outlet']) || data.outlet is string)
+        && (!data.keys().hasAll(['date']) || data.date is string)
+        && (!data.keys().hasAll(['verifier']) || data.verifier is string)
+        && (!data.keys().hasAll(['description']) || data.description is string)
         && (!data.keys().hasAll(['photo']) || (data.photo is string && data.photo.size() <= 1000000));
     }
 

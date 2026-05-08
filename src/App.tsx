@@ -438,6 +438,8 @@ export default function App() {
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editUserForm, setEditUserForm] = useState<Partial<UserType>>({});
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
+  const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
+  const [editAssetForm, setEditAssetForm] = useState<Partial<Asset>>({});
 
   // Memoized Vendor Categories for dropdowns
   const vendorCategories = useMemo(() => {
@@ -765,7 +767,7 @@ export default function App() {
     }, lang === 'id' ? 'Keluar' : 'Logout');
   };
 
-  const logActivity = async (assetCode: string, type: "Created" | "Emergency" | "Resolved", description: string, reportId?: string) => {
+  const logActivity = async (assetCode: string, type: "Created" | "Emergency" | "Resolved" | "Edited", description: string, reportId?: string) => {
     try {
       await addDoc(collection(db, 'asset_activities'), {
         assetCode,
@@ -1023,6 +1025,60 @@ export default function App() {
       setAssetForm({ condition: 'Baru', price: undefined });
       showToast("Aset Berhasil Disimpan!");
       setActiveTab('inventory');
+    } catch (err: any) {
+      showToast(err.message, true);
+    }
+  };
+
+  const handleEditAssetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAssetId || !currentUser) return;
+
+    try {
+      const original = inventory.find(i => i.id === editingAssetId);
+      if (!original) return;
+
+      const updatedAsset: any = {
+        name: String(editAssetForm.name || '').trim(),
+        code: String(editAssetForm.code || '').trim(),
+        condition: (editAssetForm.condition as any) || 'Baru',
+        placement: editAssetForm.placement || '',
+        outlet: editAssetForm.outlet || '',
+        date: editAssetForm.date || new Date().toISOString().split('T')[0],
+        verifier: editAssetForm.verifier || '',
+        description: editAssetForm.description || '',
+        price: isNaN(Number(editAssetForm.price)) ? 0 : Number(editAssetForm.price),
+        category: editAssetForm.category || '',
+        ownership: editAssetForm.ownership || '',
+        priority: editAssetForm.priority || '',
+        status: (editAssetForm.status as any) || 'Normal'
+      };
+
+      if (!updatedAsset.name || !updatedAsset.code) {
+        showToast("Nama dan Kode Aset wajib diisi!", true);
+        return;
+      }
+
+      await updateDoc(doc(db, 'assets', editingAssetId), updatedAsset);
+
+      // Detect changes for logging
+      const changes: string[] = [];
+      if (original.name !== updatedAsset.name) changes.push(`Nama: ${original.name} -> ${updatedAsset.name}`);
+      if (original.code !== updatedAsset.code) changes.push(`Kode: ${original.code} -> ${updatedAsset.code}`);
+      if (original.condition !== updatedAsset.condition) changes.push(`Kondisi: ${original.condition} -> ${updatedAsset.condition}`);
+      if (original.placement !== updatedAsset.placement) changes.push(`Penempatan: ${original.placement} -> ${updatedAsset.placement}`);
+      if (original.outlet !== updatedAsset.outlet) changes.push(`Outlet: ${original.outlet} -> ${updatedAsset.outlet}`);
+      if (original.category !== updatedAsset.category) changes.push(`Kategori: ${original.category} -> ${updatedAsset.category}`);
+      if (original.ownership !== updatedAsset.ownership) changes.push(`Kepemilikan: ${original.ownership} -> ${updatedAsset.ownership}`);
+      if (original.date !== updatedAsset.date) changes.push(`Tgl Procurement: ${original.date} -> ${updatedAsset.date}`);
+      if (original.verifier !== updatedAsset.verifier) changes.push(`Penerima: ${original.verifier} -> ${updatedAsset.verifier}`);
+      if (original.status !== updatedAsset.status) changes.push(`Status: ${original.status} -> ${updatedAsset.status}`);
+
+      const changeDesc = changes.length > 0 ? `Perubahan: ${changes.join(', ')}` : "Update informasi aset";
+      await logActivity(original.code, "Edited", changeDesc);
+
+      showToast("Aset Berhasil Diupdate!");
+      setEditingAssetId(null);
     } catch (err: any) {
       showToast(err.message, true);
     }
@@ -1342,6 +1398,8 @@ export default function App() {
             setExportMode={setExportMode}
             setAssetHistoryId={setAssetHistoryId}
             handleDeleteAsset={handleDeleteAsset}
+            setEditingAssetId={setEditingAssetId}
+            setEditAssetForm={setEditAssetForm}
             currentUser={currentUser}
             calculateAge={calculateAge}
             isAdmin={isAdmin}
@@ -2089,6 +2147,133 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Edit Asset Modal */}
+      <AnimatePresence>
+        {editingAssetId && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setEditingAssetId(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-2xl bg-white dark:bg-dark-card rounded-[40px] shadow-2xl overflow-hidden border border-slate-200 dark:border-white/5"
+            >
+              <div className="p-8 sm:p-10">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-accent-tan/20 text-accent-brown rounded-2xl flex items-center justify-center">
+                      <Edit className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-black text-slate-800 dark:text-white uppercase tracking-tight">{lang === 'id' ? 'Edit Data Aset' : 'Edit Asset Data'}</h2>
+                      <p className="text-xs text-slate-400 font-medium">{lang === 'id' ? 'Update informasi aset untuk perbaikan data.' : 'Update asset information for data correction.'}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setEditingAssetId(null)} className="w-10 h-10 flex items-center justify-center bg-slate-100 dark:bg-white/5 rounded-2xl text-slate-400 hover:text-red-500 transition-colors">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleEditAssetSubmit} className="space-y-6 max-h-[65vh] overflow-y-auto px-1 custom-scrollbar">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.assetName}</label>
+                       <input type="text" value={editAssetForm.name || ''} onChange={e => setEditAssetForm({...editAssetForm, name: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" required />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.assetCode}</label>
+                       <input type="text" value={editAssetForm.code || ''} onChange={e => setEditAssetForm({...editAssetForm, code: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" required />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.condLabel}</label>
+                      <select value={editAssetForm.condition || ''} onChange={e => setEditAssetForm({...editAssetForm, condition: e.target.value as any})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
+                        <option value="Baru">{lang === 'id' ? 'Baru' : 'New'}</option>
+                        <option value="Bekas">{lang === 'id' ? 'Bekas' : 'Used'}</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Kategori Aset' : 'Asset Category'}</label>
+                      <select value={editAssetForm.category || ''} onChange={e => setEditAssetForm({...editAssetForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
+                        <option key="select-category-default" value="">{lang === 'id' ? 'Pilih Kategori' : 'Select Category'}</option>
+                        {vendorCategories.map((cat: any) => (
+                           <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Kepemilikan Aset' : 'Asset Ownership'}</label>
+                      <select value={editAssetForm.ownership || ''} onChange={e => setEditAssetForm({...editAssetForm, ownership: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
+                        <option key="select-ownership-default" value="">{lang === 'id' ? 'Pilih Kepemilikan' : 'Select Ownership'}</option>
+                        {categoryOwnerships.map((cat: any) => (
+                           <option key={cat.id} value={cat.name}>{cat.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.placementLabel}</label>
+                       <select value={editAssetForm.placement || ''} onChange={e => setEditAssetForm({...editAssetForm, placement: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
+                         <option key="select-placement-default" value="">{t.placementPlc}</option>
+                         {categoryPlacements.map((cat: any) => (
+                           <option key={cat.id} value={cat.name}>{cat.name}</option>
+                         ))}
+                       </select>
+                    </div>
+                    <div className="space-y-2">
+                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.outletLabel}</label>
+                       <select value={editAssetForm.outlet || ''} onChange={e => setEditAssetForm({...editAssetForm, outlet: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
+                         <option key="select-outlet-default" value="">{t.outletPlc}</option>
+                         {categoryOutlets.map((cat: any) => (
+                           <option key={cat.id} value={cat.name}>{cat.name}</option>
+                         ))}
+                       </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Status</label>
+                      <select value={editAssetForm.status || 'Normal'} onChange={e => setEditAssetForm({...editAssetForm, status: e.target.value as any})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
+                        <option value="Normal">Normal</option>
+                        <option value="Emergency">Emergency</option>
+                        <option value="Maintenance">Maintenance</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Harga Aset' : 'Asset Price'}</label>
+                      <input type="number" value={editAssetForm.price || ''} onChange={e => setEditAssetForm({...editAssetForm, price: Number(e.target.value)})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Procurement Date' : 'Procurement Date'}</label>
+                      <input type="date" value={editAssetForm.date || ''} onChange={e => setEditAssetForm({...editAssetForm, date: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" required />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Receiver Name' : 'Receiver Name'}</label>
+                      <input type="text" value={editAssetForm.verifier || ''} onChange={e => setEditAssetForm({...editAssetForm, verifier: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" required />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Deskripsi Aset' : 'Asset Description'}</label>
+                    <textarea value={editAssetForm.description || ''} onChange={e => setEditAssetForm({...editAssetForm, description: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all min-h-[100px] resize-none" />
+                  </div>
+
+                  <div className="pt-6 flex gap-4">
+                    <button type="button" onClick={() => setEditingAssetId(null)} className="flex-1 py-4 bg-slate-100 dark:bg-white/5 text-slate-400 rounded-2xl font-bold uppercase text-[10px] tracking-widest hover:bg-slate-200 transition-all">
+                      {lang === 'id' ? 'Batal' : 'Cancel'}
+                    </button>
+                    <button type="submit" className="flex-[2] py-4 bg-[#10b981] text-white rounded-2xl font-bold uppercase text-[10px] tracking-widest hover:bg-[#059669] transition-all shadow-lg shadow-emerald-500/20">
+                      {lang === 'id' ? 'Simpan Perubahan' : 'Save Changes'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Toast */}
       <AnimatePresence>
         {toast && (
@@ -2305,7 +2490,7 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Kategori' : 'Category'}</label>
               <select value={assetForm.category || ''} onChange={e => setAssetForm({...assetForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option value="" className="text-slate-400">{lang === 'id' ? "Pilih Kategori" : "Select Category"}</option>
+                <option key="asset-category-placeholder" value="" className="text-slate-400">{lang === 'id' ? "Pilih Kategori" : "Select Category"}</option>
                 {vendorCategories.map((cat: any) => (
                   <option key={cat} value={cat} className="dark:bg-dark-card dark:text-white">{cat}</option>
                 ))}
@@ -2314,7 +2499,7 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Kepemilikan' : 'Ownership'}</label>
               <select value={assetForm.ownership || ''} onChange={e => setAssetForm({...assetForm, ownership: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option value="" className="text-slate-400">{lang === 'id' ? "Pilih Kepemilikan" : "Select Ownership"}</option>
+                <option key="asset-ownership-placeholder" value="" className="text-slate-400">{lang === 'id' ? "Pilih Kepemilikan" : "Select Ownership"}</option>
                 {categoryOwnerships.map((cat: any) => (
                   <option key={cat.id} value={cat.name} className="dark:bg-dark-card dark:text-white">{cat.name}</option>
                 ))}
@@ -2323,7 +2508,7 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.placementLabel}</label>
               <select value={assetForm.placement || ''} onChange={e => setAssetForm({...assetForm, placement: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option value="" className="text-slate-400">{t.placePlc}</option>
+                <option key="asset-placement-placeholder" value="" className="text-slate-400">{t.placePlc}</option>
                 {categoryPlacements.map((cat: any) => (
                   <option key={cat.id} value={cat.name} className="dark:bg-dark-card dark:text-white">{cat.name}</option>
                 ))}
@@ -2332,7 +2517,7 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.outletLabel}</label>
               <select value={assetForm.outlet || ''} onChange={e => setAssetForm({...assetForm, outlet: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option value="" className="text-slate-400">{t.outletPlc}</option>
+                <option key="asset-outlet-placeholder" value="" className="text-slate-400">{t.outletPlc}</option>
                 {categoryOutlets.map((cat: any) => (
                   <option key={cat.id} value={cat.name} className="dark:bg-dark-card dark:text-white">{cat.name}</option>
                 ))}
@@ -2401,7 +2586,7 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
   );
 });
 
-const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, setSearchQuery, searchField, setSearchField, sortOrder, setSortOrder, setShowExportModal, setExportMode, setAssetHistoryId, handleDeleteAsset, currentUser, calculateAge, isAdmin }: any) => {
+const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, setSearchQuery, searchField, setSearchField, sortOrder, setSortOrder, setShowExportModal, setExportMode, setAssetHistoryId, handleDeleteAsset, setEditingAssetId, setEditAssetForm, currentUser, calculateAge, isAdmin }: any) => {
   return (
     <div className="bg-white dark:bg-dark-card p-10 rounded-[40px] shadow-2xl shadow-slate-300/50 dark:shadow-none border border-slate-200 dark:border-white/5 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
@@ -2560,6 +2745,18 @@ const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, set
                     >
                       <History className="w-4 h-4" />
                     </button>
+                    {currentUser?.type === 'Superadmin' && (
+                      <button 
+                        onClick={() => {
+                          setEditingAssetId(item.id);
+                          setEditAssetForm(item);
+                        }}
+                        className="w-10 h-10 flex items-center justify-center rounded-2xl bg-accent-tan/20 text-accent-brown hover:bg-accent-tan hover:text-white transition-all"
+                        title="Edit Asset"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                    )}
                     {isAdmin && (
                       <button 
                         onClick={() => handleDeleteAsset(item.id!)} 
@@ -2609,7 +2806,7 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
                 className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-red-400 dark:text-white transition-all appearance-none cursor-pointer" 
                 required
               >
-                <option value="">{lang === 'id' ? 'Pilih Outlet' : 'Select Outlet'}</option>
+                <option key="emer-outlet-default" value="">{lang === 'id' ? 'Pilih Outlet' : 'Select Outlet'}</option>
                 {Array.from(new Set(inventory.map((i: any) => i.outlet))).map((outletName: any) => (
                   <option key={outletName} value={outletName}>{outletName}</option>
                 ))}
@@ -2626,7 +2823,7 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
                 required
                 disabled={!emergencyForm.outlet}
               >
-                <option value="">{lang === 'id' ? 'Pilih Penempatan' : 'Select Placement'}</option>
+                <option key="emer-placement-default" value="">{lang === 'id' ? 'Pilih Penempatan' : 'Select Placement'}</option>
                 {Array.from(new Set(inventory.filter((i: any) => i.outlet === emergencyForm.outlet).map((i: any) => i.placement))).map((pName: any) => (
                   <option key={pName} value={pName}>{pName}</option>
                 ))}
@@ -2652,7 +2849,7 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
                 required
                 disabled={!emergencyForm.placement}
               >
-                <option value="">{lang === 'id' ? 'Pilih Aset' : 'Select Asset'}</option>
+                <option key="emer-asset-default" value="">{lang === 'id' ? 'Pilih Aset' : 'Select Asset'}</option>
                 {inventory
                   .filter((i: any) => i.outlet === emergencyForm.outlet && i.placement === emergencyForm.placement)
                   .map((asset: any) => (
@@ -2691,7 +2888,7 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Kategori Kerusakan' : 'Issue Category'}</label>
               <select value={emergencyForm.category || ''} onChange={e => setEmergencyForm({...emergencyForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-red-400 dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option value="">{lang === 'id' ? 'Pilih Kategori' : 'Select Category'}</option>
+                <option key="emer-cat-placeholder" value="">{lang === 'id' ? 'Pilih Kategori' : 'Select Category'}</option>
                 {vendorCategories.map((cat: any) => <option key={cat} value={cat}>{cat}</option>)}
               </select>
             </div>
@@ -2700,7 +2897,7 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Prioritas Penanganan' : 'Handling Priority'}</label>
               <select value={emergencyForm.priority || ''} onChange={e => setEmergencyForm({...emergencyForm, priority: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-red-400 dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option value="">{lang === 'id' ? 'Pilih Prioritas' : 'Select Priority'}</option>
+                <option key="emer-priority-placeholder" value="">{lang === 'id' ? 'Pilih Prioritas' : 'Select Priority'}</option>
                 {categoryPriorities.map((cat: any) => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
               </select>
             </div>
@@ -3017,10 +3214,10 @@ const UserManagementView = React.memo(({ t, allUsers, editingUserId, setEditingU
                        onChange={e => setEditUserForm({...editUserForm, type: e.target.value})}
                        className="px-4 py-2 bg-white dark:bg-dark-dashboard rounded-xl border border-slate-200 dark:border-white/10 text-xs font-bold outline-none appearance-none cursor-pointer"
                      >
-                       {currentUser?.type === 'Superadmin' && <option value="Superadmin">Superadmin</option>}
-                       <option value="Admin">Admin</option>
-                       <option value="Teknis">Teknis</option>
-                       <option value="Report">Report</option>
+                       {currentUser?.type === 'Superadmin' && <option key="Superadmin" value="Superadmin">Superadmin</option>}
+                       <option key="Admin" value="Admin">Admin</option>
+                       <option key="Teknis" value="Teknis">Teknis</option>
+                       <option key="Report" value="Report">Report</option>
                      </select>
                    ) : (
                      <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
@@ -3114,7 +3311,7 @@ const VendorManagementView = React.memo(({ t, lang, activeCatSub, setActiveCatSu
              <div className="space-y-2">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4">{t.vendorCat}</label>
                 <select value={vendorForm.category || ''} onChange={e => setVendorForm({...vendorForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-accent-purple dark:text-white transition-all appearance-none cursor-pointer" required>
-                   <option value="">Pilih Kategori</option>
+                   <option key="vendor-cat-placeholder" value="">Pilih Kategori</option>
                    {vendorCategories.map((cat: any) => <option key={cat} value={cat}>{cat}</option>)}
                 </select>
              </div>
@@ -3233,14 +3430,14 @@ const ProcurementView = React.memo(({ lang, procurementForm, setProcurementForm,
                    <div className="space-y-2">
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4">Category</label>
                       <select value={procurementForm.category || ''} onChange={e => setProcurementForm({...procurementForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-accent-pink dark:text-white transition-all appearance-none cursor-pointer" required>
-                         <option value="">Pilih Kategori</option>
+                         <option key="proc-cat-placeholder" value="">Pilih Kategori</option>
                          {vendorCategories.map((cat: any) => <option key={cat} value={cat}>{cat}</option>)}
                       </select>
                    </div>
                    <div className="space-y-2">
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4">Target Outlet</label>
                       <select value={procurementForm.outlet || ''} onChange={e => setProcurementForm({...procurementForm, outlet: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-accent-pink dark:text-white transition-all appearance-none cursor-pointer" required>
-                         <option value="">Pilih Outlet</option>
+                         <option key="proc-outlet-placeholder" value="">Pilih Outlet</option>
                          {categoryOutlets.map((cat: any) => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
                       </select>
                    </div>
