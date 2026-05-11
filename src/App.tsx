@@ -1468,7 +1468,13 @@ export default function App() {
   // Nav Helpers
   const isLocked = (tab: string) => {
     if (!currentUser) return true;
-    if (isAdmin) return false;
+    if (currentUser.type === 'Superadmin') return false;
+    
+    // Manajemen Restrictions
+    if (currentUser.type === 'Manajemen') {
+      if (tab === 'users') return true;
+      return false;
+    }
     
     // Store Manager Restrictions
     if (currentUser.type === 'Store Manager') {
@@ -1714,7 +1720,7 @@ export default function App() {
                       { id: 'input', icon: PlusSquare, label: t.inputAset },
                       { id: 'categories', icon: Settings2, label: t.catMgmt },
                       { id: 'vendors', icon: ShieldCheck, label: t.vendorMgmt },
-                      ...(isAdmin ? [{ id: 'users', icon: Users, label: t.users }] : [])
+                      ...(currentUser?.type === 'Superadmin' ? [{ id: 'users', icon: Users, label: t.users }] : [])
                     ].filter(tab => !isLocked(tab.id));
                     
                     if (mgmtTabs.length === 0) return null;
@@ -3082,7 +3088,7 @@ const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, set
                         <Edit className="w-4 h-4" />
                       </button>
                     )}
-                    {isAdmin && (
+                    {currentUser?.type === 'Superadmin' && (
                       <button 
                         onClick={() => handleDeleteAsset(item.id!)} 
                         className="w-10 h-10 flex items-center justify-center rounded-2xl bg-red-50 dark:bg-red-500/10 text-red-300 hover:text-red-500 hover:bg-red-100 transition-all"
