@@ -1,4 +1,4 @@
-export type UserRole = "Superadmin" | "Admin" | "Teknis" | "Report";
+export type UserRole = "Superadmin" | "Manajemen" | "Teknis" | "Store Manager";
 
 export interface User {
   uid: string;
@@ -20,6 +20,8 @@ export interface Asset {
   description?: string;
   price: number;
   category?: string;
+  unit?: string;
+  quantity?: number;
   ownership?: string;
   priority?: string;
   status?: "Normal" | "Emergency" | "Maintenance";
@@ -66,6 +68,7 @@ export interface AssetActivity {
   user: string;
   timestamp: string;
   reportId?: string;
+  photo?: string;
 }
 
 export interface ProcurementRecord {

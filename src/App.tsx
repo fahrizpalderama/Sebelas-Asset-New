@@ -119,7 +119,7 @@ const DigitalClock = React.memo(() => {
 export default function App() {
   // Application State
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
-  const isAdmin = currentUser?.type === 'Admin' || currentUser?.type === 'Superadmin';
+  const isAdmin = currentUser?.type === 'Manajemen' || currentUser?.type === 'Superadmin';
   const [loading, setLoading] = useState(true);
   // Language and Theme State
   const [lang, setLang] = useState<'id' | 'en'>(() => (localStorage.getItem('lang') as 'id' | 'en') || 'id');
@@ -157,7 +157,7 @@ export default function App() {
   // Memoized Translations
   const t = useMemo(() => ({
     id: {
-      title: "Sebelas Asset Management App",
+      title: "SEBELAS COFFEE",
       subtitle: "Manajemen Aset & Emergency",
       login: "Masuk Sekarang",
       register: "Daftar Akun Baru",
@@ -183,7 +183,7 @@ export default function App() {
       dark: "Gelap",
       toastSuccessAuth: "Berhasil Masuk!",
       toastSuccessReg: "Registrasi Berhasil!",
-      toastErrorProfile: "Profil pengguna tidak ditemukan. Silakan hubungi admin.",
+      toastErrorProfile: "Profil pengguna tidak ditemukan. Silakan hubungi manajemen.",
       toastErrorEmailUsed: "Email sudah terdaftar. Gunakan email lain.",
       toastErrorWeakPass: "Password minimal 6 karakter.",
       toastErrorInvalid: "Email atau password salah.",
@@ -278,7 +278,7 @@ export default function App() {
       exportRange: "Pilih Rentang Tanggal",
     },
     en: {
-      title: "Sebelas Asset Management App",
+      title: "SEBELAS COFFEE",
       subtitle: "Asset & Emergency Management",
       login: "Login Now",
       register: "Register New Account",
@@ -304,7 +304,7 @@ export default function App() {
       dark: "Dark",
       toastSuccessAuth: "Login Successful!",
       toastSuccessReg: "Registration Successful!",
-      toastErrorProfile: "User profile not found. Please contact admin.",
+      toastErrorProfile: "User profile not found. Please contact management.",
       toastErrorEmailUsed: "Email already registered. Use another email.",
       toastErrorWeakPass: "Password minimum 6 characters.",
       toastErrorInvalid: "Invalid email or password.",
@@ -402,6 +402,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState('home');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const [inventory, setInventory] = useState<Asset[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [allUsers, setAllUsers] = useState<UserType[]>([]);
@@ -429,8 +430,8 @@ export default function App() {
   const [exportMode, setExportMode] = useState<'pdf' | 'csv'>('pdf');
 
   // Form States
-  const [authForm, setAuthForm] = useState({ email: '', password: '', name: '', role: 'Report' as UserRole });
-  const [assetForm, setAssetForm] = useState<Partial<Asset>>({ condition: 'Baru', price: undefined });
+  const [authForm, setAuthForm] = useState({ email: '', password: '', name: '', role: 'Store Manager' as UserRole });
+  const [assetForm, setAssetForm] = useState<Partial<Asset>>({ condition: 'Baru', unit: 'Pcs', quantity: 1, price: undefined });
   const [emergencyForm, setEmergencyForm] = useState<Partial<Report>>({ category: '', priority: '' });
   const [solvingReportId, setSolvingReportId] = useState<string | number | null>(null);
   const [solveForm, setSolveForm] = useState({ verifier: '', desc: '', photo: '' });
@@ -443,7 +444,13 @@ export default function App() {
 
   // Memoized Vendor Categories for dropdowns
   const vendorCategories = useMemo(() => {
-    return Array.from(new Set(categoryVendors.map(c => c.name))).sort();
+    const unique = new Map();
+    categoryVendors.forEach(c => {
+      if (!unique.has(c.name)) {
+        unique.set(c.name, c);
+      }
+    });
+    return Array.from(unique.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [categoryVendors]);
 
   // Refs for Image Processing
@@ -473,9 +480,9 @@ export default function App() {
             if (isGoogle || isAdminEmail) {
               const newUser: UserType = {
                 uid: user.uid,
-                name: user.displayName || 'Super Admin',
+                name: user.displayName || 'Super Manajemen',
                 email: user.email || '',
-                type: isAdminEmail ? 'Superadmin' : 'Report'
+                type: isAdminEmail ? 'Superadmin' : 'Store Manager'
               };
               await setDoc(doc(db, 'users', user.uid), newUser);
               setCurrentUser(newUser);
@@ -496,6 +503,59 @@ export default function App() {
   }, []);
 
   // --- Performance Optimized Data ---
+  const dashboardStats = useMemo(() => {
+    // 1. Assets by Outlet Category and Total Price
+    const outletData = categoryOutlets.map(cat => {
+      const outletAssets = inventory.filter(a => a.outlet === cat.name);
+      const count = outletAssets.length;
+      const totalPrice = outletAssets.reduce((sum, asset) => sum + (Number(asset.price) || 0), 0);
+      return { name: cat.name, count, totalPrice };
+    }).filter(d => d.count > 0);
+
+    // 2. Damage vs Penanganan pie data (Today, 7, 15, 30 days)
+    const getReportStats = (days: number) => {
+      const now = new Date();
+      let cutoff: Date;
+      if (days === 0) {
+        cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else {
+        cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+      }
+      const filteredReports = reports.filter(r => new Date(r.timestamp) >= cutoff);
+      const damageCount = filteredReports.length;
+      const resolvedCount = filteredReports.filter(r => r.status === 'resolved').length;
+      
+      return [
+        { name: lang === 'id' ? 'Kerusakan' : 'Damaged', value: damageCount },
+        { name: lang === 'id' ? 'Perbaikan' : 'Resolved', value: resolvedCount }
+      ];
+    };
+
+    // 3. Most frequently reported assets
+    const reportCounts: Record<string, {name: string, count: number}> = {};
+    reports.forEach(r => {
+      const asset = inventory.find(i => i.code === r.code);
+      const name = asset ? asset.name : r.name;
+      const key = r.code || r.name;
+      if (!reportCounts[key]) {
+        reportCounts[key] = { name: name, count: 0 };
+      }
+      reportCounts[key].count++;
+    });
+    const mostReported = Object.values(reportCounts)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    return {
+      outletData,
+      reportStats0: getReportStats(0),
+      reportStats7: getReportStats(7),
+      reportStats15: getReportStats(15),
+      reportStats30: getReportStats(30),
+      mostReported
+    };
+  }, [inventory, reports, categoryOutlets, lang]);
+
   const stats = useMemo(() => {
     const resolved = reports.filter(r => r.status === 'resolved');
     const pending = reports.filter(r => r.status === 'pending');
@@ -714,14 +774,14 @@ export default function App() {
           uid: user.uid,
           name: authForm.name,
           email: authForm.email,
-          type: 'Report'
+          type: 'Store Manager'
         };
         await setDoc(doc(db, 'users', user.uid), newUser);
         setCurrentUser(newUser);
         showToast(t.toastSuccessReg);
       }
       setAuthMode(null);
-      setAuthForm({ email: '', password: '', name: '', role: 'Report' });
+      setAuthForm({ email: '', password: '', name: '', role: 'Store Manager' });
     } catch (err: any) {
       let msg = err.message;
       if (err.code === 'auth/email-already-in-use') msg = t.toastErrorEmailUsed;
@@ -767,7 +827,7 @@ export default function App() {
     }, lang === 'id' ? 'Keluar' : 'Logout');
   };
 
-  const logActivity = async (assetCode: string, type: "Created" | "Emergency" | "Resolved" | "Edited", description: string, reportId?: string) => {
+  const logActivity = async (assetCode: string, type: "Created" | "Emergency" | "Resolved" | "Edited", description: string, reportId?: string, photo?: string) => {
     try {
       await addDoc(collection(db, 'asset_activities'), {
         assetCode,
@@ -775,7 +835,8 @@ export default function App() {
         description,
         user: currentUser?.name || 'Unknown',
         timestamp: new Date().toISOString(),
-        reportId: reportId || null
+        reportId: reportId || null,
+        photo: photo || null
       });
     } catch (err) {
       console.error("Activity Logging Error:", err);
@@ -818,7 +879,7 @@ export default function App() {
   const handleAddCategory = async (type: 'outlet' | 'placement' | 'vendor' | 'ownership' | 'priority', name: string) => {
     if (!name.trim()) return;
     if (!isAdmin) {
-      showToast("Hanya Admin yang bisa menambah kategori!", true);
+      showToast("Hanya Manajemen yang bisa menambah kategori!", true);
       return;
     }
     try {
@@ -835,7 +896,7 @@ export default function App() {
 
   const handleDeleteCategory = async (type: 'outlet' | 'placement' | 'vendor' | 'ownership' | 'priority', id: string) => {
     if (!isAdmin) {
-      showToast("Hanya Admin yang bisa menghapus kategori!", true);
+      showToast("Hanya Manajemen yang bisa menghapus kategori!", true);
       return;
     }
     openConfirm(t.catMgmt, t.catDeleteConfirm, async () => {
@@ -854,17 +915,52 @@ export default function App() {
 
   const handleDeleteAsset = async (id: string | number) => {
     if (!isAdmin) {
-      showToast("Hanya Admin yang bisa menghapus aset!", true);
+      showToast("Hanya Manajemen yang bisa menghapus aset!", true);
       return;
     }
     openConfirm(t.inventory, t.assetDeleteConfirm, async () => {
       try {
+        // Find asset to get its code for cascading delete
+        const asset = inventory.find(i => i.id === id);
+        const assetCode = asset?.code;
+
+        // 1. Delete the asset itself
         await deleteDoc(doc(db, 'assets', id as string));
-        showToast("Aset berhasil dihapus!");
+
+        // 2. Cascading delete for associated reports if assetCode exists
+        if (assetCode) {
+          const associatedReports = reports.filter(r => r.code === assetCode);
+          if (associatedReports.length > 0) {
+            const deletePromises = associatedReports.map(r => deleteDoc(doc(db, 'reports', r.id!.toString())));
+            await Promise.all(deletePromises);
+            console.log(`Deleted ${associatedReports.length} associated reports for asset ${assetCode}`);
+          }
+        }
+
+        showToast(lang === 'id' ? "Aset dan laporan terkait berhasil dihapus!" : "Asset and associated reports successfully deleted!");
       } catch (err: any) {
         showToast(err.message, true);
       }
     }, lang === 'id' ? 'Hapus' : 'Delete');
+  };
+
+  const handleDeleteAllReports = async () => {
+    if (!isAdmin) return;
+    openConfirm(t.handTitle, lang === 'id' ? "Hapus semua laporan di menu penanganan?" : "Delete all reports in handling menu?", async () => {
+      try {
+        const pendingReports = reports.filter(r => r.status === 'pending');
+        if (pendingReports.length === 0) {
+          showToast(lang === 'id' ? "Tidak ada laporan untuk dihapus" : "No reports to delete");
+          return;
+        }
+
+        const deletePromises = pendingReports.map(r => deleteDoc(doc(db, 'reports', r.id!)));
+        await Promise.all(deletePromises);
+        showToast(lang === 'id' ? "Semua laporan berhasil dihapus!" : "All reports successfully deleted!");
+      } catch (err: any) {
+        showToast(err.message, true);
+      }
+    }, lang === 'id' ? 'Hapus Semua' : 'Delete All');
   };
 
   // Image Helper
@@ -881,13 +977,29 @@ export default function App() {
         const ctx = canvas.getContext('2d', { alpha: false });
         if (!ctx) return;
 
-        const size = Math.min(img.width, img.height);
-        canvas.width = 500;
-        canvas.height = 500;
+        // More flexible compression: limit max dimension but maintain aspect ratio
+        const MAX_DIM = 1000;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_DIM) {
+            height *= MAX_DIM / width;
+            width = MAX_DIM;
+          }
+        } else {
+          if (height > MAX_DIM) {
+            width *= MAX_DIM / height;
+            height = MAX_DIM;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
         ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, 500, 500);
-        ctx.drawImage(img, (img.width - size) / 2, (img.height - size) / 2, size, size, 0, 0, 500, 500);
-        setter(canvas.toDataURL('image/jpeg', 0.8));
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        setter(canvas.toDataURL('image/jpeg', 0.7)); // Optimized compression
       };
       img.src = e.target?.result as string;
     };
@@ -1013,6 +1125,8 @@ export default function App() {
         description: assetForm.description || '',
         price: Number(assetForm.price) || 0,
         category: assetForm.category || '',
+        unit: assetForm.unit || 'Pcs',
+        quantity: Number(assetForm.quantity) || 1,
         ownership: assetForm.ownership || '',
         priority: assetForm.priority || ''
       };
@@ -1020,9 +1134,9 @@ export default function App() {
       await addDoc(collection(db, 'assets'), newAsset);
       
       // Log Activity
-      await logActivity(newAsset.code, "Created", "Aset baru ditambahkan ke sistem");
+      await logActivity(newAsset.code, "Created", "Aset baru ditambahkan ke sistem", undefined, newAsset.photo);
 
-      setAssetForm({ condition: 'Baru', price: undefined });
+      setAssetForm({ condition: 'Baru', unit: 'Pcs', quantity: 1, price: undefined });
       showToast("Aset Berhasil Disimpan!");
       setActiveTab('inventory');
     } catch (err: any) {
@@ -1049,6 +1163,8 @@ export default function App() {
         description: editAssetForm.description || '',
         price: isNaN(Number(editAssetForm.price)) ? 0 : Number(editAssetForm.price),
         category: editAssetForm.category || '',
+        unit: editAssetForm.unit || '',
+        quantity: isNaN(Number(editAssetForm.quantity)) ? 1 : Number(editAssetForm.quantity),
         ownership: editAssetForm.ownership || '',
         priority: editAssetForm.priority || '',
         status: (editAssetForm.status as any) || 'Normal'
@@ -1075,7 +1191,7 @@ export default function App() {
       if (original.status !== updatedAsset.status) changes.push(`Status: ${original.status} -> ${updatedAsset.status}`);
 
       const changeDesc = changes.length > 0 ? `Perubahan: ${changes.join(', ')}` : "Update informasi aset";
-      await logActivity(original.code, "Edited", changeDesc);
+      await logActivity(original.code, "Edited", changeDesc, undefined, updatedAsset.photo);
 
       showToast("Aset Berhasil Diupdate!");
       setEditingAssetId(null);
@@ -1110,7 +1226,7 @@ export default function App() {
       const docRef = await addDoc(collection(db, 'reports'), report);
       
       // Log Activity
-      await logActivity(report.code, "Emergency", `Laporan kerusakan: ${report.issue}`, docRef.id);
+      await logActivity(report.code, "Emergency", `Laporan kerusakan: ${report.issue}`, docRef.id, report.photo);
       
       // Update Asset Status
       if (asset?.id) {
@@ -1168,7 +1284,7 @@ export default function App() {
       await updateDoc(doc(db, 'reports', solvingReportId.toString()), solveData);
       
       // Log Activity
-      await logActivity(item.code, "Resolved", "Perbaikan selesai", solvingReportId.toString());
+      await logActivity(item.code, "Resolved", "Perbaikan selesai", solvingReportId.toString(), solveForm.photo);
 
       // Reset Asset Status back to Normal
       const asset = inventory.find(i => i.code === item.code);
@@ -1208,7 +1324,7 @@ export default function App() {
 
   const handleVendorSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin) return showToast("Hanya Admin!", true);
+    if (!isAdmin) return showToast("Hanya Manajemen!", true);
     
     // Safety check for category
     const vendorType = activeCatSub === 'Service' || activeCatSub === 'Procurement' ? activeCatSub : 'Service';
@@ -1241,7 +1357,7 @@ export default function App() {
   };
 
   const handleDeleteVendor = async (id: string) => {
-    if (!isAdmin) return showToast("Hanya Admin!", true);
+    if (!isAdmin) return showToast("Hanya Manajemen!", true);
     openConfirm("Hapus Vendor", "Yakin hapus data vendor ini?", async () => {
       try {
         const collectionName = activeCatSub === 'Service' ? 'vendors_service' : 'vendors_procurement';
@@ -1353,7 +1469,18 @@ export default function App() {
   const isLocked = (tab: string) => {
     if (!currentUser) return true;
     if (isAdmin) return false;
-    if ((tab === 'input' || tab === 'procurement') && (currentUser.type === 'Teknis' || currentUser.type === 'Report')) return true;
+    
+    // Store Manager Restrictions
+    if (currentUser.type === 'Store Manager') {
+      const allowed = ['home', 'inventory', 'emergency', 'handling'];
+      if (!allowed.includes(tab)) return true;
+    }
+
+    // Teknis Restrictions
+    if (currentUser.type === 'Teknis') {
+      if (tab === 'input' || tab === 'procurement' || tab === 'categories' || tab === 'vendors' || tab === 'users') return true;
+    }
+
     return false;
   };
 
@@ -1365,6 +1492,8 @@ export default function App() {
             stats={stats}
             chartData={chartData}
             dashResolvedRange={dashResolvedRange}
+            dashboardStats={dashboardStats}
+            lang={lang}
           />
         );
       case 'input':
@@ -1403,6 +1532,7 @@ export default function App() {
             currentUser={currentUser}
             calculateAge={calculateAge}
             isAdmin={isAdmin}
+            setPreviewPhoto={setPreviewPhoto}
           />
         );
       case 'emergency':
@@ -1430,6 +1560,9 @@ export default function App() {
             setSolvingReportId={setSolvingReportId}
             vendors={vendors}
             currentUser={currentUser}
+            isAdmin={isAdmin}
+            handleDeleteAllReports={handleDeleteAllReports}
+            setPreviewPhoto={setPreviewPhoto}
           />
         );
       case 'users':
@@ -1460,6 +1593,7 @@ export default function App() {
             t={t}
             procurements={procurements}
             onlyAdd={true}
+            setPreviewPhoto={setPreviewPhoto}
           />
         );
       case 'procurement_list':
@@ -1476,6 +1610,7 @@ export default function App() {
             t={t}
             procurements={procurements}
             onlyList={true}
+            setPreviewPhoto={setPreviewPhoto}
           />
         );
       case 'categories':
@@ -1540,7 +1675,7 @@ export default function App() {
                     <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-lg overflow-hidden p-0.5">
                       <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRT3HPi5oJMO5sRj1BwfuBsTVI0YsKJqEGy9w&s" alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
-                    <h1 className="text-lg font-extrabold tracking-tight leading-tight uppercase italic">{t.title.split(' ')[0]}</h1>
+                    <h1 className="text-lg font-extrabold tracking-tight leading-tight uppercase italic">{t.title}</h1>
                   </div>
                   <button onClick={() => setIsMobileMenuOpen(false)} className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-lg text-slate-400">
                     <X className="w-4 h-4" />
@@ -1558,7 +1693,7 @@ export default function App() {
                         { id: 'procurement_list', icon: History, label: t.procurementList },
                         { id: 'emergency', icon: AlertTriangle, label: t.emergency, variant: 'red' },
                         { id: 'handling', icon: CheckSquare, label: t.handling },
-                      ].map((tab: any) => (
+                      ].filter(tab => !isLocked(tab.id)).map((tab: any) => (
                         <button
                           key={tab.id}
                           onClick={() => {
@@ -1567,36 +1702,44 @@ export default function App() {
                           }}
                           className={`w-full flex items-center gap-4 px-6 py-3.5 transition-all rounded-2xl ${activeTab === tab.id ? 'bg-gradient-primary text-white shadow-lg shadow-accent-purple/20' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
                         >
-                          <tab.icon className={`w-5 h-5 ${activeTab === tab.id ? 'text-white' : tab.variant === 'red' ? 'text-red-400' : 'text-slate-500'}`} />
-                          <span className="font-bold text-sm tracking-wide">{tab.label}</span>
+                          <tab.icon className={`w-5 h-5 flex-shrink-0 ${activeTab === tab.id ? 'text-white' : tab.variant === 'red' ? 'text-red-400' : 'text-slate-500'}`} />
+                          <span className="font-bold text-sm tracking-wide text-left">{tab.label}</span>
                         </button>
                       ))}
                     </nav>
                   </div>
 
-                  <div>
-                    <span className="px-6 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Management</span>
-                    <nav className="mt-2 space-y-1">
-                      {[
-                        { id: 'input', icon: PlusSquare, label: t.inputAset },
-                        { id: 'categories', icon: Settings2, label: t.catMgmt },
-                        { id: 'vendors', icon: ShieldCheck, label: t.vendorMgmt },
-                        ...(isAdmin ? [{ id: 'users', icon: Users, label: t.users }] : [])
-                      ].map((tab: any) => (
-                        <button
-                          key={tab.id}
-                          onClick={() => {
-                            setActiveTab(tab.id);
-                            setIsMobileMenuOpen(false);
-                          }}
-                          className={`w-full flex items-center gap-4 px-6 py-3.5 transition-all rounded-2xl ${activeTab === tab.id ? 'bg-gradient-primary text-white shadow-lg shadow-accent-purple/20' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
-                        >
-                          <tab.icon className={`w-5 h-5 ${activeTab === tab.id ? 'text-white' : 'text-slate-500'}`} />
-                          <span className="font-bold text-sm tracking-wide">{tab.label}</span>
-                        </button>
-                      ))}
-                    </nav>
-                  </div>
+                  {(() => {
+                    const mgmtTabs = [
+                      { id: 'input', icon: PlusSquare, label: t.inputAset },
+                      { id: 'categories', icon: Settings2, label: t.catMgmt },
+                      { id: 'vendors', icon: ShieldCheck, label: t.vendorMgmt },
+                      ...(isAdmin ? [{ id: 'users', icon: Users, label: t.users }] : [])
+                    ].filter(tab => !isLocked(tab.id));
+                    
+                    if (mgmtTabs.length === 0) return null;
+                    
+                    return (
+                      <div>
+                        <span className="px-6 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Management</span>
+                        <nav className="mt-2 space-y-1">
+                          {mgmtTabs.map((tab: any) => (
+                            <button
+                              key={tab.id}
+                              onClick={() => {
+                                setActiveTab(tab.id);
+                                setIsMobileMenuOpen(false);
+                              }}
+                              className={`w-full flex items-center gap-4 px-6 py-3.5 transition-all rounded-2xl ${activeTab === tab.id ? 'bg-gradient-primary text-white shadow-lg shadow-accent-purple/20' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
+                            >
+                              <tab.icon className={`w-5 h-5 flex-shrink-0 ${activeTab === tab.id ? 'text-white' : 'text-slate-500'}`} />
+                              <span className="font-bold text-sm tracking-wide text-left">{tab.label}</span>
+                            </button>
+                          ))}
+                        </nav>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -1779,7 +1922,7 @@ export default function App() {
                 <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg overflow-hidden p-0.5">
                   <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRT3HPi5oJMO5sRj1BwfuBsTVI0YsKJqEGy9w&s" alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 </div>
-                <h1 className="text-xl font-extrabold tracking-tight leading-tight uppercase italic">{t.title.split(' ')[0]}</h1>
+                <h1 className="text-xl font-extrabold tracking-tight leading-tight uppercase italic">{t.title}</h1>
               </div>
 
               <div className="space-y-1 mb-8">
@@ -1794,7 +1937,7 @@ export default function App() {
                     { id: 'procurement_list', icon: History, label: t.procurementList },
                     { id: 'handling', icon: CheckSquare, label: t.handling, count: reports.filter(r => r.status !== 'resolved').length },
                     { id: 'emergency', icon: AlertTriangle, label: t.emergency, variant: 'red' },
-                  ].map((tab: any) => {
+                  ].filter(tab => !isLocked(tab.id)).map((tab: any) => {
                     const isActive = activeTab === tab.id;
                     const locked = isLocked(tab.id);
                     
@@ -1818,8 +1961,8 @@ export default function App() {
                         {isActive && <div className="absolute left-0 w-1.5 h-full bg-gradient-primary rounded-r-full" />}
                         {isActive && <div className="absolute inset-0 bg-gradient-primary opacity-10" />}
                         
-                        <tab.icon className={`w-5 h-5 ${isActive ? 'text-accent-pink' : tab.variant === 'red' ? 'text-red-400' : 'text-slate-500 group-hover:text-white'}`} />
-                        <span className="font-bold text-sm tracking-wide">{tab.label}</span>
+                        <tab.icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-accent-pink' : tab.variant === 'red' ? 'text-red-400' : 'text-slate-500 group-hover:text-white'}`} />
+                        <span className="font-bold text-sm tracking-wide text-left">{tab.label}</span>
                         {tab.count !== undefined && !isActive && (
                           <span className={`ml-auto text-[9px] px-2 py-0.5 rounded-full ${tab.variant === 'red' ? 'bg-red-500/20 text-red-400' : 'bg-white/5 text-white/40'}`}>
                             {tab.count}
@@ -1832,45 +1975,55 @@ export default function App() {
               </div>
 
               <div className="space-y-1">
-                 <div className="px-6 py-2">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Management</span>
-                 </div>
-                 <nav className="space-y-1">
-                  {[
-                    { id: 'input', icon: PlusSquare, label: t.inputAset },
-                    { id: 'categories', icon: Settings2, label: t.catMgmt },
-                    { id: 'vendors', icon: ShieldCheck, label: t.vendorMgmt },
-                    ...(isAdmin ? [{ id: 'users', icon: Users, label: t.users }] : [])
-                  ].map((tab: any) => {
-                    const isActive = activeTab === tab.id;
-                    const locked = isLocked(tab.id);
-                    
-                    return (
-                      <button
-                        key={tab.id}
-                        disabled={locked}
-                        onClick={() => {
-                          setActiveTab(tab.id);
-                          if (tab.id === 'vendors') setActiveCatSub('Service');
-                          if (tab.id === 'categories') setActiveCatSub('Location');
-                        }}
-                        className={`
-                          w-full flex items-center gap-4 px-8 py-3.5 transition-all duration-300 group relative
-                          ${isActive 
-                            ? 'text-white' 
-                            : 'text-slate-500 hover:text-white'}
-                          ${locked ? 'opacity-30 cursor-not-allowed grayscale' : ''}
-                        `}
-                      >
-                        {isActive && <div className="absolute left-0 w-1.5 h-full bg-gradient-primary rounded-r-full" />}
-                        {isActive && <div className="absolute inset-0 bg-gradient-primary opacity-10" />}
-                        
-                        <tab.icon className={`w-5 h-5 ${isActive ? 'text-accent-pink' : tab.variant === 'red' ? 'text-red-400' : 'text-slate-500 group-hover:text-white'}`} />
-                        <span className="font-bold text-sm tracking-wide">{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </nav>
+                 {(() => {
+                   const mgmtTabs = [
+                     { id: 'input', icon: PlusSquare, label: t.inputAset },
+                     { id: 'categories', icon: Settings2, label: t.catMgmt },
+                     { id: 'vendors', icon: ShieldCheck, label: t.vendorMgmt },
+                     ...(isAdmin ? [{ id: 'users', icon: Users, label: t.users }] : [])
+                   ].filter(tab => !isLocked(tab.id));
+
+                   if (mgmtTabs.length === 0) return null;
+
+                   return (
+                     <>
+                       <div className="px-6 py-2">
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Management</span>
+                       </div>
+                       <nav className="space-y-1">
+                        {mgmtTabs.map((tab: any) => {
+                          const isActive = activeTab === tab.id;
+                          const locked = isLocked(tab.id);
+                          
+                          return (
+                            <button
+                              key={tab.id}
+                              disabled={locked}
+                              onClick={() => {
+                                setActiveTab(tab.id);
+                                if (tab.id === 'vendors') setActiveCatSub('Service');
+                                if (tab.id === 'categories') setActiveCatSub('Location');
+                              }}
+                              className={`
+                                w-full flex items-center gap-4 px-8 py-3.5 transition-all duration-300 group relative
+                                ${isActive 
+                                  ? 'text-white' 
+                                  : 'text-slate-500 hover:text-white'}
+                                ${locked ? 'opacity-30 cursor-not-allowed grayscale' : ''}
+                              `}
+                            >
+                              {isActive && <div className="absolute left-0 w-1.5 h-full bg-gradient-primary rounded-r-full" />}
+                              {isActive && <div className="absolute inset-0 bg-gradient-primary opacity-10" />}
+                              
+                              <tab.icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-accent-pink' : tab.variant === 'red' ? 'text-red-400' : 'text-slate-500 group-hover:text-white'}`} />
+                              <span className="font-bold text-sm tracking-wide text-left">{tab.label}</span>
+                            </button>
+                          );
+                        })}
+                      </nav>
+                    </>
+                   );
+                 })()}
               </div>
             </div>
 
@@ -1979,10 +2132,11 @@ export default function App() {
                 <button onClick={() => setAssetHistoryId(null)} className="w-10 h-10 flex items-center justify-center hover:bg-white dark:hover:bg-white/10 rounded-2xl transition-colors shadow-sm"><X className="w-5 h-5 text-slate-400" /></button>
               </div>
               <div className="p-10 max-h-[60vh] overflow-y-auto space-y-6 no-scrollbar">
-                {assetActivities.filter(a => a.assetCode === assetHistoryId).length > 0 ? (
-                  assetActivities.filter(a => a.assetCode === assetHistoryId).map((act, idx) => (
-                    <div key={idx} className="flex gap-6 items-start relative group">
-                       {idx !== assetActivities.filter(a => a.assetCode === assetHistoryId).length - 1 && (
+                    {assetActivities.filter(a => a.assetCode === assetHistoryId).length > 0 ? (
+                  assetActivities.filter(a => a.assetCode === assetHistoryId).map((act) => (
+                    <div key={act.id || `activity-${act.timestamp}`} className="flex gap-6 items-start relative group">
+                       {/* Line indicator logic */}
+                       {act.id !== assetActivities.filter(a => a.assetCode === assetHistoryId)[assetActivities.filter(a => a.assetCode === assetHistoryId).length - 1].id && (
                          <div className="absolute left-6 top-12 bottom-0 w-0.5 bg-slate-100 dark:bg-white/5" />
                        )}
                        <div className={`w-12 h-12 rounded-2xl flex-shrink-0 flex items-center justify-center shadow-sm z-10 ${
@@ -2000,6 +2154,14 @@ export default function App() {
                              <span className="text-[10px] font-mono font-bold text-slate-400">{act.timestamp.replace('T', ' ').split('.')[0]}</span>
                           </div>
                           <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-bold">{act.description}</p>
+                          {act.photo && (
+                            <div 
+                              onClick={() => setPreviewPhoto(act.photo)}
+                              className="mt-3 w-full h-32 rounded-2xl overflow-hidden border border-slate-100 dark:border-white/5 cursor-zoom-in"
+                            >
+                               <img src={act.photo} alt="History" className="w-full h-full object-cover hover:scale-105 transition-transform duration-500" />
+                            </div>
+                          )}
                           <div className="mt-3 flex items-center gap-2">
                              <div className="w-5 h-5 rounded-full bg-slate-100 dark:bg-white/10 flex items-center justify-center text-[8px] font-black">{act.user[0]}</div>
                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{act.user}</span>
@@ -2051,18 +2213,33 @@ export default function App() {
                 <div className="space-y-2">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Foto Bukti Selesai</label>
                   <input type="file" id="solvePhotoInput" className="hidden" accept="image/*" onChange={e => handlePhotoUpload(e, (val) => setSolveForm({...solveForm, photo: val}))} />
-                  <label htmlFor="solvePhotoInput" className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-slate-100 dark:border-white/10 rounded-[32px] cursor-pointer hover:bg-slate-50 dark:hover:bg-white/5 transition-all group overflow-hidden relative">
+                  <input type="file" id="solveCameraInput" className="hidden" accept="image/*" capture="environment" onChange={e => handlePhotoUpload(e, (val) => setSolveForm({...solveForm, photo: val}))} />
+                  
+                  <div className="w-full h-40 border-2 border-dashed border-slate-100 dark:border-white/10 rounded-[32px] overflow-hidden relative bg-slate-50 dark:bg-white/2 transition-all">
                     {solveForm.photo ? (
-                      <img src={solveForm.photo} alt="Result" className="w-full h-full object-cover" />
+                      <div className="relative w-full h-full group">
+                        <img src={solveForm.photo} alt="Result" className="w-full h-full object-cover" />
+                        <button 
+                          type="button"
+                          onClick={() => setSolveForm({...solveForm, photo: ''})}
+                          className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     ) : (
-                      <>
-                        <div className="w-12 h-12 bg-white dark:bg-dark-dashboard rounded-2xl flex items-center justify-center shadow-md mb-3 group-hover:scale-110 transition-transform">
-                          <Camera className="w-6 h-6 text-accent-purple" />
-                        </div>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Klik untuk Upload Foto Hasil</p>
-                      </>
+                      <div className="flex w-full h-full">
+                        <label htmlFor="solvePhotoInput" className="flex-1 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 dark:hover:bg-white/5 transition-all group border-r border-slate-100 dark:border-white/5">
+                          <ImageIcon className="w-6 h-6 text-slate-300 group-hover:text-accent-purple transition-colors" />
+                          <p className="text-[9px] font-bold text-slate-400 mt-2 uppercase tracking-tight">{lang === 'id' ? 'Galeri' : 'Gallery'}</p>
+                        </label>
+                        <label htmlFor="solveCameraInput" className="flex-1 flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 dark:hover:bg-white/5 transition-all group">
+                          <Camera className="w-6 h-6 text-slate-300 group-hover:text-accent-purple transition-colors" />
+                          <p className="text-[9px] font-bold text-slate-400 mt-2 uppercase tracking-tight">{lang === 'id' ? 'Kamera' : 'Camera'}</p>
+                        </label>
+                      </div>
                     )}
-                  </label>
+                  </div>
                 </div>
                 <div className="pt-4 flex gap-4">
                   <button type="button" onClick={() => setSolvingReportId(null)} className="flex-1 py-5 bg-slate-100 dark:bg-white/5 text-slate-400 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all">Batal</button>
@@ -2188,21 +2365,31 @@ export default function App() {
                     </div>
                     <div className="space-y-2">
                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.assetCode}</label>
-                       <input type="text" value={editAssetForm.code || ''} onChange={e => setEditAssetForm({...editAssetForm, code: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" required />
+              <input type="text" value={editAssetForm.code || ''} onChange={e => setEditAssetForm({...editAssetForm, code: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" required />
                     </div>
-                    <div className="space-y-2">
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.condLabel}</label>
-                      <select value={editAssetForm.condition || ''} onChange={e => setEditAssetForm({...editAssetForm, condition: e.target.value as any})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
-                        <option value="Baru">{lang === 'id' ? 'Baru' : 'New'}</option>
-                        <option value="Bekas">{lang === 'id' ? 'Bekas' : 'Used'}</option>
-                      </select>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.condLabel}</label>
+                        <select value={editAssetForm.condition || ''} onChange={e => setEditAssetForm({...editAssetForm, condition: e.target.value as any})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
+                          <option value="Baru">{lang === 'id' ? 'Baru' : 'New'}</option>
+                          <option value="Bekas">{lang === 'id' ? 'Bekas' : 'Used'}</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Satuan' : 'Unit'}</label>
+                        <input type="text" value={editAssetForm.unit || ''} onChange={e => setEditAssetForm({...editAssetForm, unit: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" placeholder="Pcs/Unit" required />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Jumlah' : 'Quantity'}</label>
+                        <input type="number" value={editAssetForm.quantity || ''} onChange={e => setEditAssetForm({...editAssetForm, quantity: Number(e.target.value)})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner" placeholder="1" required />
+                      </div>
                     </div>
                     <div className="space-y-2">
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Kategori Aset' : 'Asset Category'}</label>
                       <select value={editAssetForm.category || ''} onChange={e => setEditAssetForm({...editAssetForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all shadow-inner appearance-none cursor-pointer">
                         <option key="select-category-default" value="">{lang === 'id' ? 'Pilih Kategori' : 'Select Category'}</option>
                         {vendorCategories.map((cat: any) => (
-                           <option key={cat} value={cat}>{cat}</option>
+                           <option key={cat.id} value={cat.name}>{cat.name}</option>
                         ))}
                       </select>
                     </div>
@@ -2273,6 +2460,35 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+      
+      {/* Photo Preview Modal */}
+      <AnimatePresence>
+        {previewPhoto && (
+          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
+             <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPreviewPhoto(null)}
+              className="absolute inset-0 bg-slate-900/90 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative max-w-5xl w-full max-h-[90vh] rounded-[40px] overflow-hidden shadow-2xl border border-white/10 group"
+            >
+              <img src={previewPhoto} alt="Preview Large" className="w-full h-full object-contain bg-black/20" />
+              <button 
+                onClick={() => setPreviewPhoto(null)}
+                className="absolute top-6 right-6 w-12 h-12 bg-white/10 backdrop-blur-md text-white rounded-2xl flex items-center justify-center hover:bg-white/20 transition-all border border-white/20 shadow-xl"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Toast */}
       <AnimatePresence>
@@ -2296,157 +2512,253 @@ export default function App() {
 }
 
 // Performance Optimized Views
-const DashboardView = React.memo(({ stats, chartData, dashResolvedRange }: any) => {
+const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang }: any) => {
+  const [range, setRange] = useState<'0' | '7' | '15' | '30'>('15');
+  
+  const currentReportStats = useMemo(() => {
+    switch (range) {
+      case '0': return dashboardStats.reportStats0;
+      case '7': return dashboardStats.reportStats7;
+      case '30': return dashboardStats.reportStats30;
+      default: return dashboardStats.reportStats15;
+    }
+  }, [dashboardStats, range]);
+
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      <div className="flex items-center justify-between px-4">
-        <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">Statistics</h2>
-        <div className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-400">
-          <span className="cursor-pointer hover:text-accent-purple transition">Task</span>
-          <span className="cursor-pointer text-slate-900 dark:text-white border-b-2 border-accent-pink pb-1">Overview</span>
-          <span className="cursor-pointer hover:text-accent-purple transition">Focus</span>
+    <div className="space-y-10 animate-in fade-in transition-all duration-700">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-4">
+        <div className="space-y-1">
+          <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight uppercase">Dashboard</h2>
+          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">{lang === 'id' ? 'Statistik Manajemen Aset' : 'Asset Management Statistics'}</p>
         </div>
-        <div className="flex items-center gap-4">
-          <Search className="w-5 h-5 text-slate-400 cursor-pointer" />
-          <Bell className="w-5 h-5 text-slate-400 cursor-pointer" />
-          <RefreshCw className="w-5 h-5 text-slate-400 cursor-pointer" />
-          <button className="hidden lg:flex items-center gap-2 px-5 py-2.5 bg-gradient-primary text-white rounded-full text-xs font-bold shadow-lg shadow-accent-purple/20 transition hover:scale-105 active:scale-95">
-            <Printer className="w-4 h-4" /> Print data
-          </button>
+        
+        <div className="flex items-center gap-4 bg-white/50 dark:bg-white/5 p-2 rounded-2xl border border-slate-100 dark:border-white/5 backdrop-blur-xl">
+           <div className="flex items-center gap-3 px-4 border-r border-slate-200 dark:border-white/10">
+              <Calendar className="w-4 h-4 text-accent-purple" />
+              <DigitalClock />
+           </div>
+           <button className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-xl transition-all">
+             <RefreshCw className="w-4 h-4 text-slate-400" />
+           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 px-4">
-        <div className="bg-white dark:bg-dark-card p-6 sm:p-8 rounded-[32px] sm:rounded-[40px] shadow-sm border border-slate-100 dark:border-white/5 space-y-8">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Overview</h3>
-            <select className="text-[10px] font-bold text-slate-400 bg-slate-50 dark:bg-white/5 rounded-lg px-2 py-1 outline-none">
-              <option>Last 15 days</option>
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-4">
-            <div className="text-center space-y-2">
-              <p className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">{stats.totalAssets}</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">Total Assets</p>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-pink-50 dark:bg-pink-500/10 text-pink-500 rounded-full text-[8px] font-bold">
-                 <ArrowDown className="w-2 h-2" /> 9%
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 px-4">
+        {[
+          { label: lang === 'id' ? 'Total Aset' : 'Total Assets', value: stats.totalAssets, icon: Archive, color: 'text-accent-purple', bg: 'bg-accent-purple/10' },
+          { label: lang === 'id' ? 'Laporan Pending' : 'Pending Reports', value: stats.pending.length, icon: AlertCircle, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+          { label: lang === 'id' ? 'Terselesaikan' : 'Resolved', value: stats.resolved.length, icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+          { label: lang === 'id' ? 'Penyelesaian' : 'Completion', value: `${stats.completionRate}%`, icon: TrendingUp, color: 'text-accent-pink', bg: 'bg-accent-pink/10' }
+        ].map((item, i) => (
+          <div key={`dashboard-stat-${i}`} className="bg-white dark:bg-dark-card p-6 rounded-[32px] border border-slate-100 dark:border-white/5 shadow-sm hover:shadow-xl transition-all group overflow-hidden relative">
+            <div className={`absolute -right-4 -bottom-4 w-24 h-24 ${item.bg} rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap overflow-hidden`} />
+            <div className="flex items-center justify-between relative z-10">
+              <div className={`w-12 h-12 ${item.bg} ${item.color} rounded-2xl flex items-center justify-center`}>
+                <item.icon className="w-6 h-6" />
               </div>
-              <div className="pt-2 text-[18px] font-bold text-slate-800 dark:text-slate-200">1208</div>
-              <p className="text-[8px] text-slate-400 uppercase font-black">Total Tasks</p>
-            </div>
-            <div className="text-center space-y-2">
-              <p className="text-3xl font-black text-slate-900 dark:text-white">$140</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Today's Spend</p>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-500 rounded-full text-[8px] font-bold">
-                 <ArrowUp className="w-2 h-2" /> 3%
+              <div className="text-right">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{item.label}</p>
+                <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">{item.value}</p>
               </div>
-              <div className="pt-2 text-[18px] font-bold text-slate-800 dark:text-slate-200">$1K</div>
-              <p className="text-[8px] text-slate-400 uppercase font-black">Total Spend</p>
-            </div>
-            <div className="text-center space-y-2">
-              <p className="text-3xl font-black text-slate-900 dark:text-white">{stats.pending.length}</p>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pending</p>
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 dark:bg-blue-500/10 text-blue-500 rounded-full text-[8px] font-bold">
-                 <ArrowUp className="w-2 h-2" /> 7
-              </div>
-              <div className="pt-2 text-[18px] font-bold text-slate-800 dark:text-slate-200">1658</div>
-              <p className="text-[8px] text-slate-400 uppercase font-black">Total Tasks</p>
             </div>
           </div>
-        </div>
+        ))}
+      </div>
 
-        <div className="bg-white dark:bg-dark-card p-8 rounded-[40px] shadow-sm border border-slate-100 dark:border-white/5 space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Achievement Score</h3>
-            <span className="text-[10px] font-bold text-accent-pink">Top 6 sat</span>
-          </div>
-          <div className="h-[180px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="colorTasks" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#9b51e0" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#9b51e0" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} hide />
-                <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                <Tooltip />
-                <Area type="monotone" dataKey="tasks" stroke="#9b51e0" strokeWidth={2} fillOpacity={1} fill="url(#colorTasks)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-dark-card p-8 rounded-[40px] shadow-sm border border-slate-100 dark:border-white/5 space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Completed Tasks</h3>
-            <div className="flex bg-slate-50 dark:bg-white/5 p-1 rounded-xl gap-1">
-              <button className="px-3 py-1 text-[10px] font-bold text-slate-400">Day</button>
-              <button className="px-3 py-1 text-[10px] font-bold text-slate-900 bg-white rounded-lg shadow-sm">Week</button>
-              <button className="px-3 py-1 text-[10px] font-bold text-slate-400">Month</button>
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-8 px-4">
+        <div className="bg-white dark:bg-dark-card p-8 rounded-[40px] border border-slate-100 dark:border-white/5 shadow-sm flex flex-col h-[420px]">
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-3">
+              <div className="w-1.5 h-6 bg-accent-purple rounded-full" />
+              <h3 className="text-base font-black text-slate-800 dark:text-white uppercase tracking-widest">{lang === 'id' ? 'Aset per Outlet' : 'Assets per Outlet'}</h3>
             </div>
+            <Archive className="w-5 h-5 text-slate-300" />
           </div>
-          <div className="h-[200px] w-full">
+          <div className="flex-1 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                <Tooltip />
-                <Area type="monotone" dataKey="spend" stroke="#e051ae" strokeWidth={3} fill="transparent" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-dark-card p-8 rounded-[40px] shadow-sm border border-slate-100 dark:border-white/5 space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Completion Rate</h3>
-            <div className="flex bg-slate-50 dark:bg-white/5 p-1 rounded-xl gap-1">
-              <button className="px-3 py-1 text-[10px] font-bold text-slate-400">Day</button>
-              <button className="px-3 py-1 text-[10px] font-bold text-slate-900 bg-white rounded-lg shadow-sm">Week</button>
-            </div>
-          </div>
-          <div className="h-[200px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#94a3b8'}} unit="%" />
-                <Tooltip />
-                <Bar dataKey="tasks" fill="#9b51e0" radius={[4, 4, 0, 0]} barSize={6} />
+              <BarChart data={dashboardStats.outletData} layout="vertical" margin={{ left: 40, right: 40 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} strokeOpacity={0.1} />
+                <XAxis type="number" hide />
+                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 800, fill: '#64748b' }} width={80} />
+                <Tooltip 
+                  cursor={{ fill: 'transparent' }}
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: 'white' }}
+                />
+                <Bar 
+                  dataKey="count" 
+                  fill="#9b51e0" 
+                  radius={[0, 10, 10, 0]} 
+                  label={{ position: 'right', fill: '#64748b', fontSize: 12, fontWeight: 900 }}
+                  barSize={20}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
+
+        <div className="bg-white dark:bg-dark-card p-8 rounded-[40px] border border-slate-100 dark:border-white/5 shadow-sm flex flex-col h-[420px]">
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-3">
+              <div className="w-1.5 h-6 bg-accent-pink rounded-full" />
+              <h3 className="text-base font-black text-slate-800 dark:text-white uppercase tracking-widest">{lang === 'id' ? 'Stats Kerusakan' : 'Reports Stats'}</h3>
+            </div>
+            <div className="flex bg-slate-50 dark:bg-white/5 p-1 rounded-xl">
+              {(['0', '7', '15', '30'] as const).map(d => (
+                <button 
+                  key={d}
+                  onClick={() => setRange(d)}
+                  className={`px-3 py-1 text-[10px] font-black uppercase tracking-widest transition-all rounded-lg ${range === d ? 'bg-white dark:bg-white/10 text-slate-900 dark:text-white shadow-sm' : 'text-slate-400'}`}
+                >
+                  {d === '0' ? (lang === 'id' ? 'HARI INI' : 'TODAY') : `${d}D`}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 relative">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={currentReportStats}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={82}
+                  outerRadius={95}
+                  paddingAngle={5}
+                  dataKey="value"
+                  animationBegin={0}
+                  animationDuration={1500}
+                >
+                  {currentReportStats.map((entry: any, index: number) => (
+                    <Cell key={`cell-pie-${index}`} fill={index === 0 ? '#f43f5e' : '#10b981'} stroke="none" />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mb-4">
+              <p className="text-2xl font-black text-slate-800 dark:text-white">
+                {currentReportStats[0]?.value > 0 
+                  ? Math.round((currentReportStats[1].value / currentReportStats[0].value) * 100)
+                  : 0}%
+              </p>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-1">{lang === 'id' ? 'Selesai' : 'Resolved'}</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-center gap-6 mt-4">
+            {currentReportStats.map((item: any, idx: number) => (
+              <div key={`report-legend-${idx}`} className="flex items-center gap-2">
+                <div className={`w-2.5 h-2.5 rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{item.name}: {item.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-dark-card p-8 rounded-[40px] border border-slate-100 dark:border-white/5 shadow-sm flex flex-col h-[420px]">
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-3">
+              <div className="w-1.5 h-6 bg-amber-500 rounded-full" />
+              <h3 className="text-base font-black text-slate-800 dark:text-white uppercase tracking-widest">{lang === 'id' ? 'Sering Rusak' : 'Top Damaged'}</h3>
+            </div>
+            <AlertTriangle className="w-5 h-5 text-slate-300" />
+          </div>
+          <div className="flex-1 min-h-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dashboardStats.mostReported} margin={{ top: 10, bottom: 0 }}>
+                <XAxis dataKey="name" axisLine={false} tickLine={false} hide />
+                <Tooltip 
+                  cursor={{ fill: 'rgba(0,0,0,0.02)' }}
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                />
+                <Bar 
+                  dataKey="count" 
+                  radius={[8, 8, 0, 0]}
+                  label={{ position: 'top', fill: '#64748b', fontSize: 10, fontWeight: 900 }}
+                  barSize={24}
+                >
+                   {dashboardStats.mostReported.map((_: any, index: number) => {
+                     const colors = ['#f59e0b', '#f43f5e', '#a855f7', '#3b82f6', '#10b981'];
+                     return <Cell key={`cell-reported-${index}`} fill={colors[index % colors.length]} />;
+                   })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-4 space-y-2">
+            {dashboardStats.mostReported.map((item: any, idx: number) => {
+               const colors = ['bg-amber-500', 'bg-red-500', 'bg-purple-500', 'bg-blue-500', 'bg-emerald-500'];
+               return (
+                <div key={`reported-item-${idx}`} className="flex items-center justify-between text-[11px] font-bold">
+                  <div className="flex items-center gap-2 truncate">
+                    <div className={`w-2 h-2 rounded-full ${colors[idx % colors.length]}`} />
+                    <span className="text-slate-500 truncate">{item.name}</span>
+                  </div>
+                  <span className="text-slate-800 dark:text-white bg-slate-100 dark:bg-white/10 px-2 py-0.5 rounded-lg shrink-0">{item.count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* New Chart: Price Per Outlet */}
+        <div className="bg-white dark:bg-dark-card p-8 rounded-[40px] border border-slate-100 dark:border-white/5 shadow-sm flex flex-col h-[420px]">
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-3">
+              <div className="w-1.5 h-6 bg-emerald-500 rounded-full" />
+              <h3 className="text-base font-black text-slate-800 dark:text-white uppercase tracking-widest">{lang === 'id' ? 'Nilai Aset per Outlet' : 'Asset Value per Outlet'}</h3>
+            </div>
+            <div className="w-10 h-10 bg-emerald-500/10 text-emerald-500 rounded-2xl flex items-center justify-center font-black text-xs">$</div>
+          </div>
+          <div className="flex-1 min-h-0">
+             <ResponsiveContainer width="100%" height="100%">
+               <BarChart data={dashboardStats.outletData} margin={{ top: 20 }}>
+                 <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.05} />
+                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 800, fill: '#64748b' }} />
+                 <YAxis hide />
+                 <Tooltip 
+                   formatter={(value: any) => [`Rp ${value.toLocaleString()}`, lang === 'id' ? 'Total Harga' : 'Total Price']}
+                   contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                 />
+                 <Bar dataKey="totalPrice" fill="#10b981" radius={[10, 10, 0, 0]} barSize={40}>
+                   {dashboardStats.outletData.map((_: any, index: number) => {
+                     const colors = ['#10b981', '#059669', '#34d399', '#6ee7b7', '#a7f3d0'];
+                     return <Cell key={`cell-price-${index}`} fill={colors[index % colors.length]} />;
+                   })}
+                 </Bar>
+               </BarChart>
+             </ResponsiveContainer>
+          </div>
+          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-white/5 space-y-2">
+             {dashboardStats.outletData.map((item: any, idx: number) => (
+                <div key={`outlet-price-item-${idx}`} className="flex items-center justify-between text-[11px] font-bold">
+                   <span className="text-slate-500">{item.name}</span>
+                   <span className="text-emerald-500">Rp {item.totalPrice.toLocaleString()}</span>
+                </div>
+             ))}
+          </div>
+        </div>
       </div>
 
-      <div className="px-4 mb-10">
-         <div className="bg-white dark:bg-dark-card p-6 lg:p-6 lg:px-10 rounded-[32px] lg:rounded-full shadow-sm border border-slate-100 dark:border-white/5 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 lg:gap-0">
+      <div className="px-4 mt-6">
+         <div className="bg-white dark:bg-dark-card p-6 lg:p-6 lg:px-10 rounded-[32px] shadow-sm border border-slate-100 dark:border-white/5 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 lg:gap-0">
             <div className="flex flex-wrap items-center gap-4 lg:gap-8">
-               <span className="text-[10px] font-black text-slate-900 dark:text-white uppercase tracking-widest">Highlighted Info</span>
+               <span className="text-[10px] font-black text-slate-900 dark:text-white uppercase tracking-widest">Efficiency Profile</span>
                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tasks done</span>
-                  <span className="text-[10px] font-black text-pink-500">9</span>
-                  <ArrowDown className="w-3 h-3 text-pink-500" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tasks Capacity</span>
+                  <span className="text-[10px] font-black text-pink-500">85%</span>
+                  <ArrowUp className="w-3 h-3 text-pink-500" />
                </div>
                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Spend</span>
-                  <span className="text-[10px] font-black text-emerald-500">3%</span>
-                  <ArrowUp className="w-3 h-3 text-emerald-500" />
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Resolution Speed</span>
+                  <span className="text-[10px] font-black text-emerald-500">Very High</span>
+                  <RefreshCw className="w-3 h-3 text-emerald-500" />
                </div>
                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Achievement Score</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">System Health</span>
                   <TrendingUp className="w-4 h-4 text-emerald-400" />
-                  <span className="text-[10px] font-black text-emerald-400">300+</span>
-               </div>
-            </div>
-            <div className="flex items-center gap-4">
-               <div className="flex bg-slate-50 dark:bg-white/5 p-1 rounded-full gap-1">
-                  <button className="px-4 py-1.5 text-[10px] font-bold text-slate-900 bg-white rounded-full shadow-sm">Week</button>
-                  <button className="px-4 py-1.5 text-[10px] font-bold text-slate-400">Month</button>
+                  <span className="text-[10px] font-black text-emerald-400">OPTIMAL</span>
                </div>
             </div>
          </div>
@@ -2479,11 +2791,21 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.assetCodeLabel}</label>
                 <input type="text" value={assetForm.code || ''} onChange={e => setAssetForm({...assetForm, code: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all" placeholder="ID-001" required />
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Satuan' : 'Unit'}</label>
+                  <input type="text" value={assetForm.unit || ''} onChange={e => setAssetForm({...assetForm, unit: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all" placeholder="Pcs/Unit" required />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Jumlah' : 'Quantity'}</label>
+                  <input type="number" value={assetForm.quantity ?? ''} onChange={e => setAssetForm({...assetForm, quantity: Number(e.target.value)})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all" placeholder="1" required />
+                </div>
+              </div>
               <div className="space-y-2">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.conditionLabel}</label>
                 <select value={assetForm.condition} onChange={e => setAssetForm({...assetForm, condition: e.target.value as any})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all appearance-none cursor-pointer">
-                  <option value="Baru" className="dark:bg-dark-card dark:text-white">{t.newAsset}</option>
-                  <option value="Bekas" className="dark:bg-dark-card dark:text-white">{t.usedAsset}</option>
+                  <option value="Baru" className="dark:bg-[#1a1a2e] dark:text-white">{t.newAsset}</option>
+                  <option value="Bekas" className="dark:bg-[#1a1a2e] dark:text-white">{t.usedAsset}</option>
                 </select>
               </div>
             </div>
@@ -2492,7 +2814,7 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
               <select value={assetForm.category || ''} onChange={e => setAssetForm({...assetForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-accent-tan dark:text-white transition-all appearance-none cursor-pointer" required>
                 <option key="asset-category-placeholder" value="" className="text-slate-400">{lang === 'id' ? "Pilih Kategori" : "Select Category"}</option>
                 {vendorCategories.map((cat: any) => (
-                  <option key={cat} value={cat} className="dark:bg-dark-card dark:text-white">{cat}</option>
+                  <option key={cat.id} value={cat.name} className="dark:bg-dark-card dark:text-white">{cat.name}</option>
                 ))}
               </select>
             </div>
@@ -2586,7 +2908,7 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
   );
 });
 
-const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, setSearchQuery, searchField, setSearchField, sortOrder, setSortOrder, setShowExportModal, setExportMode, setAssetHistoryId, handleDeleteAsset, setEditingAssetId, setEditAssetForm, currentUser, calculateAge, isAdmin }: any) => {
+const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, setSearchQuery, searchField, setSearchField, sortOrder, setSortOrder, setShowExportModal, setExportMode, setAssetHistoryId, handleDeleteAsset, setEditingAssetId, setEditAssetForm, currentUser, calculateAge, isAdmin, setPreviewPhoto }: any) => {
   return (
     <div className="bg-white dark:bg-dark-card p-10 rounded-[40px] shadow-2xl shadow-slate-300/50 dark:shadow-none border border-slate-200 dark:border-white/5 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
@@ -2665,7 +2987,10 @@ const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, set
           return (
             <div key={item.id} className="bg-white dark:bg-white/5 rounded-[40px] border border-slate-100 dark:border-white/5 overflow-hidden group hover:shadow-2xl transition-all duration-500 flex flex-col">
               {/* Image Section */}
-              <div className="relative h-56 overflow-hidden">
+              <div 
+                onClick={() => setPreviewPhoto(item.photo)}
+                className="relative h-56 overflow-hidden cursor-zoom-in"
+              >
                 <img src={item.photo} alt={item.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 
@@ -2806,9 +3131,9 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
                 className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-red-400 dark:text-white transition-all appearance-none cursor-pointer" 
                 required
               >
-                <option key="emer-outlet-default" value="">{lang === 'id' ? 'Pilih Outlet' : 'Select Outlet'}</option>
+                <option key="emer-outlet-default" value="" className="text-slate-400">{lang === 'id' ? 'Pilih Outlet' : 'Select Outlet'}</option>
                 {Array.from(new Set(inventory.map((i: any) => i.outlet))).map((outletName: any) => (
-                  <option key={outletName} value={outletName}>{outletName}</option>
+                  <option key={outletName} value={outletName} className="dark:bg-dark-card dark:text-white">{outletName}</option>
                 ))}
               </select>
             </div>
@@ -2823,9 +3148,9 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
                 required
                 disabled={!emergencyForm.outlet}
               >
-                <option key="emer-placement-default" value="">{lang === 'id' ? 'Pilih Penempatan' : 'Select Placement'}</option>
+                <option key="emer-placement-default" value="" className="text-slate-400">{lang === 'id' ? 'Pilih Penempatan' : 'Select Placement'}</option>
                 {Array.from(new Set(inventory.filter((i: any) => i.outlet === emergencyForm.outlet).map((i: any) => i.placement))).map((pName: any) => (
-                  <option key={pName} value={pName}>{pName}</option>
+                  <option key={pName} value={pName} className="dark:bg-dark-card dark:text-white">{pName}</option>
                 ))}
               </select>
             </div>
@@ -2849,11 +3174,11 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
                 required
                 disabled={!emergencyForm.placement}
               >
-                <option key="emer-asset-default" value="">{lang === 'id' ? 'Pilih Aset' : 'Select Asset'}</option>
+                <option key="emer-asset-default" value="" className="text-slate-400">{lang === 'id' ? 'Pilih Aset' : 'Select Asset'}</option>
                 {inventory
                   .filter((i: any) => i.outlet === emergencyForm.outlet && i.placement === emergencyForm.placement)
                   .map((asset: any) => (
-                    <option key={asset.id} value={asset.name}>{asset.name}</option>
+                    <option key={asset.id} value={asset.name} className="dark:bg-dark-card dark:text-white">{asset.name}</option>
                   ))
                 }
               </select>
@@ -2888,8 +3213,8 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Kategori Kerusakan' : 'Issue Category'}</label>
               <select value={emergencyForm.category || ''} onChange={e => setEmergencyForm({...emergencyForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-red-400 dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option key="emer-cat-placeholder" value="">{lang === 'id' ? 'Pilih Kategori' : 'Select Category'}</option>
-                {vendorCategories.map((cat: any) => <option key={cat} value={cat}>{cat}</option>)}
+                <option key="emer-cat-placeholder" value="" className="text-slate-400">{lang === 'id' ? 'Pilih Kategori' : 'Select Category'}</option>
+                {vendorCategories.map((cat: any) => <option key={cat.id} value={cat.name} className="dark:bg-dark-card dark:text-white">{cat.name}</option>)}
               </select>
             </div>
 
@@ -2897,8 +3222,8 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Prioritas Penanganan' : 'Handling Priority'}</label>
               <select value={emergencyForm.priority || ''} onChange={e => setEmergencyForm({...emergencyForm, priority: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-red-400 dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option key="emer-priority-placeholder" value="">{lang === 'id' ? 'Pilih Prioritas' : 'Select Priority'}</option>
-                {categoryPriorities.map((cat: any) => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
+                <option key="emer-priority-placeholder" value="" className="text-slate-400">{lang === 'id' ? 'Pilih Prioritas' : 'Select Priority'}</option>
+                {categoryPriorities.map((cat: any) => <option key={cat.id} value={cat.name} className="dark:bg-dark-card dark:text-white">{cat.name}</option>)}
               </select>
             </div>
 
@@ -2912,28 +3237,48 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Foto Aset' : 'Asset Photo'}</label>
               <input type="file" id="emergencyPhotoInput" className="hidden" accept="image/*" onChange={e => handlePhotoUpload(e, (val: string) => setEmergencyForm({...emergencyForm, photo: val}))} />
-              <label htmlFor="emergencyPhotoInput" className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-red-100 dark:border-white/10 rounded-[28px] cursor-pointer hover:bg-red-50 dark:hover:bg-white/5 transition-all group overflow-hidden relative">
+              <input type="file" id="emergencyCameraInput" className="hidden" accept="image/*" capture="environment" onChange={e => handlePhotoUpload(e, (val: string) => setEmergencyForm({...emergencyForm, photo: val}))} />
+              
+              <div className="w-full h-32 border-2 border-dashed border-red-100 dark:border-white/10 rounded-[28px] overflow-hidden relative bg-red-50/10 dark:bg-white/2 transition-all">
                 {emergencyForm.photo ? (
-                  <img src={emergencyForm.photo} alt="Issue" className="w-full h-full object-cover" />
+                  <div className="relative w-full h-full group">
+                    <img src={emergencyForm.photo} alt="Issue" className="w-full h-full object-cover" />
+                    <button 
+                      type="button"
+                      onClick={() => setEmergencyForm({...emergencyForm, photo: ''})}
+                      className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 ) : (
-                  <>
-                    <Camera className="w-8 h-8 text-red-200 group-hover:text-red-400 transition-colors" />
-                    <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase">{t.photoPlc}</p>
-                  </>
+                  <div className="flex w-full h-full">
+                    <label htmlFor="emergencyPhotoInput" className="flex-1 flex flex-col items-center justify-center cursor-pointer hover:bg-red-50 dark:hover:bg-white/5 transition-all group border-r border-red-50 dark:border-white/5">
+                      <ImageIcon className="w-6 h-6 text-red-200 group-hover:text-red-400 transition-colors" />
+                      <p className="text-[9px] font-bold text-slate-400 mt-2 uppercase tracking-tight">{lang === 'id' ? 'Galeri' : 'Gallery'}</p>
+                    </label>
+                    <label htmlFor="emergencyCameraInput" className="flex-1 flex flex-col items-center justify-center cursor-pointer hover:bg-red-50 dark:hover:bg-white/5 transition-all group">
+                      <Camera className="w-6 h-6 text-red-200 group-hover:text-red-400 transition-colors" />
+                      <p className="text-[9px] font-bold text-slate-400 mt-2 uppercase tracking-tight">{lang === 'id' ? 'Kamera' : 'Camera'}</p>
+                    </label>
+                  </div>
                 )}
-              </label>
+              </div>
             </div>
           </div>
         </div>
-        <button type="submit" className="w-full bg-red-400 text-white py-5 rounded-[28px] font-bold shadow-xl shadow-red-400/20 hover:bg-red-500 transition-all transform active:scale-[0.98] mt-4 flex items-center justify-center gap-3 uppercase text-xs tracking-widest">
-           <Send className="w-4 h-4" /> {t.sendEmg}
+        <button 
+          type="submit" 
+          className="w-full bg-gradient-to-r from-red-500 to-rose-600 text-white py-6 rounded-[32px] font-black shadow-2xl shadow-red-500/30 hover:shadow-red-500/50 hover:-translate-y-1 transition-all duration-300 transform active:scale-[0.98] mt-6 flex items-center justify-center gap-4 uppercase text-[11px] tracking-[0.2em]"
+        >
+           <Send className="w-5 h-5" /> {t.sendEmg}
         </button>
       </form>
     </div>
   );
 });
 
-const HandlingView = React.memo(({ t, lang, reports, setSolvingReportId, vendors }: any) => {
+const HandlingView = React.memo(({ t, lang, reports, setSolvingReportId, vendors, isAdmin, handleDeleteAllReports, setPreviewPhoto }: any) => {
   const pendingReports = reports.filter((r: any) => r.status === 'pending');
   
   const priorityGroups = [
@@ -2944,14 +3289,25 @@ const HandlingView = React.memo(({ t, lang, reports, setSolvingReportId, vendors
 
   return (
     <div className="bg-white dark:bg-dark-card p-6 sm:p-10 rounded-[32px] sm:rounded-[40px] shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 text-slate-800 dark:text-slate-100">
-      <div className="flex items-center gap-4 mb-10">
-         <div className="w-12 h-12 bg-emerald-100 text-emerald-500 rounded-2xl flex items-center justify-center">
-            <CheckSquare className="w-6 h-6" />
-         </div>
-         <div>
-            <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">{t.handTitle}</h2>
-            <p className="text-xs text-slate-400">{t.handSub}</p>
-         </div>
+      <div className="flex items-center justify-between mb-10">
+        <div className="flex items-center gap-4">
+           <div className="w-12 h-12 bg-emerald-100 text-emerald-500 rounded-2xl flex items-center justify-center">
+              <CheckSquare className="w-6 h-6" />
+           </div>
+           <div>
+              <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">{t.handTitle}</h2>
+              <p className="text-xs text-slate-400">{t.handSub}</p>
+           </div>
+        </div>
+        {isAdmin && pendingReports.length > 0 && (
+          <button 
+            onClick={handleDeleteAllReports}
+            className="px-4 py-2 bg-red-500/10 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {lang === 'id' ? 'Kosongkan Daftar' : 'Clear List'}
+          </button>
+        )}
       </div>
       
       {pendingReports.length === 0 ? (
@@ -2988,7 +3344,10 @@ const HandlingView = React.memo(({ t, lang, reports, setSolvingReportId, vendors
                         <div className="absolute top-0 right-0 w-20 h-20 bg-red-500/5 rounded-full -mr-10 -mt-10 group-hover:scale-150 transition-transform duration-700" />
                         
                         <div className="flex justify-between items-start relative z-10">
-                          <div className="w-14 h-14 rounded-2xl overflow-hidden shadow-sm border-2 border-white dark:border-white/10 group-hover:scale-105 transition-transform duration-500">
+                          <div 
+                            onClick={() => setPreviewPhoto(report.photo)}
+                            className="w-14 h-14 rounded-2xl overflow-hidden shadow-sm border-2 border-white dark:border-white/10 group-hover:scale-105 transition-transform duration-500 cursor-zoom-in"
+                          >
                             <img src={report.photo} alt="Issue" className="w-full h-full object-cover" />
                           </div>
                           <div className="text-right">
@@ -3196,17 +3555,32 @@ const UserManagementView = React.memo(({ t, allUsers, editingUserId, setEditingU
               <tr key={user.uid} className="hover:bg-dashboard-bg/50 dark:hover:bg-white/5 transition-colors group">
                 <td className="px-6 py-5 whitespace-nowrap">
                    {editingUserId === user.uid ? (
-                     <input 
-                       type="text" 
-                       value={editUserForm.name || ''} 
-                       onChange={e => setEditUserForm({...editUserForm, name: e.target.value})}
-                       className="px-4 py-2 bg-white dark:bg-dark-dashboard rounded-xl border border-slate-200 dark:border-white/10 text-xs font-bold outline-none ring-2 ring-transparent focus:ring-accent-purple transition-all"
-                     />
+                     <div className="flex flex-col gap-1">
+                       <input 
+                         type="text" 
+                         value={editUserForm.name || ''} 
+                         onChange={e => setEditUserForm({...editUserForm, name: e.target.value})}
+                         className="px-4 py-2 bg-white dark:bg-dark-dashboard rounded-xl border border-slate-200 dark:border-white/10 text-xs font-bold outline-none ring-2 ring-transparent focus:ring-accent-purple transition-all"
+                         placeholder={t.name}
+                       />
+                     </div>
                    ) : (
                      <div className="font-bold text-slate-800 dark:text-slate-200">{user.name}</div>
                    )}
                 </td>
-                <td className="px-6 py-5 whitespace-nowrap font-medium text-slate-500 dark:text-slate-400 text-xs">{user.email}</td>
+                <td className="px-6 py-5 whitespace-nowrap">
+                   {editingUserId === user.uid ? (
+                     <input 
+                       type="email" 
+                       value={editUserForm.email || ''} 
+                       onChange={e => setEditUserForm({...editUserForm, email: e.target.value})}
+                       className="px-4 py-2 bg-white dark:bg-dark-dashboard rounded-xl border border-slate-200 dark:border-white/10 text-xs font-bold outline-none ring-2 ring-transparent focus:ring-accent-purple transition-all"
+                       placeholder={t.email}
+                     />
+                   ) : (
+                     <div className="font-medium text-slate-500 dark:text-slate-400 text-xs">{user.email}</div>
+                   )}
+                </td>
                 <td className="px-6 py-5 whitespace-nowrap">
                    {editingUserId === user.uid ? (
                      <select 
@@ -3215,14 +3589,14 @@ const UserManagementView = React.memo(({ t, allUsers, editingUserId, setEditingU
                        className="px-4 py-2 bg-white dark:bg-dark-dashboard rounded-xl border border-slate-200 dark:border-white/10 text-xs font-bold outline-none appearance-none cursor-pointer"
                      >
                        {currentUser?.type === 'Superadmin' && <option key="Superadmin" value="Superadmin">Superadmin</option>}
-                       <option key="Admin" value="Admin">Admin</option>
+                       <option key="Manajemen" value="Manajemen">Manajemen</option>
                        <option key="Teknis" value="Teknis">Teknis</option>
-                       <option key="Report" value="Report">Report</option>
+                       <option key="Store Manager" value="Store Manager">Store Manager</option>
                      </select>
                    ) : (
                      <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
                        user.type === 'Superadmin' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' :
-                       user.type === 'Admin' ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/10' :
+                       user.type === 'Manajemen' ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/10' :
                        user.type === 'Teknis' ? 'bg-blue-100 text-blue-600 dark:bg-blue-500/10' :
                        'bg-slate-100 text-slate-600 dark:bg-white/10'
                      }`}>
@@ -3312,7 +3686,7 @@ const VendorManagementView = React.memo(({ t, lang, activeCatSub, setActiveCatSu
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4">{t.vendorCat}</label>
                 <select value={vendorForm.category || ''} onChange={e => setVendorForm({...vendorForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-accent-purple dark:text-white transition-all appearance-none cursor-pointer" required>
                    <option key="vendor-cat-placeholder" value="">Pilih Kategori</option>
-                   {vendorCategories.map((cat: any) => <option key={cat} value={cat}>{cat}</option>)}
+                   {vendorCategories.map((cat: any) => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
                 </select>
              </div>
              <div className="space-y-2">
@@ -3379,7 +3753,7 @@ const VendorManagementView = React.memo(({ t, lang, activeCatSub, setActiveCatSu
   );
 });
 
-const ProcurementView = React.memo(({ lang, procurementForm, setProcurementForm, handleProcurementSubmit, handlePhotoUpload, vendorCategories, categoryOutlets, formatRupiah, t, procurements, onlyAdd, onlyList }: any) => {
+const ProcurementView = React.memo(({ lang, procurementForm, setProcurementForm, handleProcurementSubmit, handlePhotoUpload, vendorCategories, categoryOutlets, formatRupiah, t, procurements, onlyAdd, onlyList, setPreviewPhoto }: any) => {
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center gap-4">
@@ -3431,7 +3805,7 @@ const ProcurementView = React.memo(({ lang, procurementForm, setProcurementForm,
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4">Category</label>
                       <select value={procurementForm.category || ''} onChange={e => setProcurementForm({...procurementForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-accent-pink dark:text-white transition-all appearance-none cursor-pointer" required>
                          <option key="proc-cat-placeholder" value="">Pilih Kategori</option>
-                         {vendorCategories.map((cat: any) => <option key={cat} value={cat}>{cat}</option>)}
+                         {vendorCategories.map((cat: any) => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
                       </select>
                    </div>
                    <div className="space-y-2">
@@ -3485,7 +3859,10 @@ const ProcurementView = React.memo(({ lang, procurementForm, setProcurementForm,
                           {procurements.map(p => (
                             <tr key={p.id} className="hover:bg-dashboard-bg/50 dark:hover:bg-white/5 transition-colors group">
                                <td className="px-6 py-5 whitespace-nowrap">
-                                  <div className="w-12 h-12 rounded-xl overflow-hidden shadow-sm border border-white dark:border-white/10 group-hover:scale-110 transition-transform cursor-pointer">
+                                  <div 
+                                     onClick={() => setPreviewPhoto(p.photo)}
+                                     className="w-12 h-12 rounded-xl overflow-hidden shadow-sm border border-white dark:border-white/10 group-hover:scale-110 transition-transform cursor-pointer"
+                                  >
                                      {p.photo ? <img src={p.photo} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-slate-100 dark:bg-white/5 flex items-center justify-center"><FileText className="w-4 h-4 text-slate-300" /></div>}
                                   </div>
                                </td>

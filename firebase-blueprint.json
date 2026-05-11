@@ -7,7 +7,7 @@
       "properties": {
         "name": { "type": "string" },
         "email": { "type": "string" },
-        "type": { "type": "string", "enum": ["Admin", "Teknis", "Report"] }
+        "type": { "type": "string", "enum": ["Superadmin", "Manajemen", "Teknis", "Store Manager"] }
       },
       "required": ["name", "email", "type"]
     },
@@ -27,6 +27,8 @@
         "description": { "type": "string" },
         "price": { "type": "number" },
         "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "quantity": { "type": "number" },
         "ownership": { "type": "string" },
         "priority": { "type": "string" },
         "status": { "type": "string", "enum": ["Normal", "Emergency", "Maintenance"] }

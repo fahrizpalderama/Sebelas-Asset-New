@@ -23,17 +23,18 @@ service cloud.firestore {
       return isSignedIn() && (
         isSuperadmin() ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('type', 'none') in ['Admin', 'Superadmin'])
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('type', 'none') in ['Manajemen', 'Superadmin'])
       ); 
     }
     
     function hasRole(role) { 
       return isSignedIn() && (
-        (isSuperadmin() && (role == 'Admin' || role == 'Superadmin')) ||
+        (isSuperadmin() && (role == 'Manajemen' || role == 'Superadmin')) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('type', 'none') == role)
       ); 
     }
+    function isStoreManager() { return hasRole('Store Manager'); }
     function isTeknis() { return hasRole('Teknis'); }
 
     function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
@@ -43,10 +44,10 @@ service cloud.firestore {
     // --- Validation Blueprints ---
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'name', 'email', 'type']) 
-        && data.keys().size() == 4
+        && data.keys().size() >= 4
         && data.name is string && data.name.size() > 0 && data.name.size() <= 100
         && data.email is string && data.email.size() > 0 && data.email.size() <= 100
-        && data.type in ['Superadmin', 'Admin', 'Teknis', 'Report'];
+        && data.type in ['Superadmin', 'Manajemen', 'Teknis', 'Store Manager'];
     }
 
     function isValidAsset(data) {
@@ -58,6 +59,8 @@ service cloud.firestore {
         && (!data.keys().hasAll(['category']) || data.category is string)
         && (!data.keys().hasAll(['ownership']) || data.ownership is string)
         && (!data.keys().hasAll(['priority']) || data.priority is string)
+        && (!data.keys().hasAll(['unit']) || data.unit is string)
+        && (!data.keys().hasAll(['quantity']) || data.quantity is number)
         && (!data.keys().hasAll(['placement']) || data.placement is string)
         && (!data.keys().hasAll(['outlet']) || data.outlet is string)
         && (!data.keys().hasAll(['date']) || data.date is string)
@@ -124,8 +127,8 @@ service cloud.firestore {
     match /assets/{assetId} {
       allow read: if isSignedIn();
       allow create: if isAdmin() && isValidAsset(incoming()) 
-        && incoming().keys().hasAll(['name', 'code', 'condition', 'placement', 'outlet', 'date', 'verifier', 'photo', 'price', 'category']);
-      allow update: if (isAdmin() || isTeknis()) 
+        && incoming().keys().hasAll(['name', 'code', 'condition', 'placement', 'outlet', 'date', 'verifier', 'photo', 'price', 'category', 'unit', 'quantity']);
+      allow update: if (isAdmin() || isTeknis() || isStoreManager()) 
         && isValidAsset(incoming())
         && (isAdmin() || incoming().diff(existing()).affectedKeys().hasOnly(['status']));
       allow delete: if isAdmin();
@@ -142,6 +145,8 @@ service cloud.firestore {
         && existing().status == 'pending' // Prevent state shortcuts or re-resolving
         && incoming().status == 'resolved'
         && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'solverInfo']);
+        
+      allow delete: if isAdmin();
     }
 
     match /category_outlets/{catId} {
