@@ -1235,13 +1235,19 @@ export default function App() {
         await updateDoc(doc(db, 'assets', asset.id.toString()), { status: 'Emergency' });
       }
 
-      const msg = `LAPORAN URGENSI PERBAIKAN\n` +
-                  `- Outlet : ${report.outlet}\n` +
-                  `- Penempatan : ${report.placement}\n` +
-                  `- Nama Aset : ${report.name}\n` +
-                  `- Kondisi : ${report.issue}\n` +
-                  `- Deskripsi : ${report.desc}\n\n` +
-                  `Mohon segera dilakukan pengecekan dan penanganan. Cek informasi detail dan lakukan konfirmasi pada aplikasi Management Asset. Terimakasih`;
+      const msg = `*🚨 LAPORAN EMERGENCY ASET*\n\n` +
+                  `*Detail Laporan:* \n` +
+                  `• *Outlet:* ${report.outlet}\n` +
+                  `• *Lokasi:* ${report.placement}\n` +
+                  `• *Aset:* ${report.name}\n` +
+                  `• *Masalah:* ${report.issue}\n` +
+                  `• *Prioritas:* ${report.priority}\n` +
+                  `• *Kategori:* ${report.category}\n\n` +
+                  `*Deskripsi:* \n` +
+                  `${report.desc}\n\n` +
+                  `*Pelapor:* ${report.reporter}\n` +
+                  `*Waktu:* ${new Date().toLocaleString('id-ID')}\n\n` +
+                  `_Mohon segera ditindaklanjuti melalui aplikasi Management Asset. Terimakasih._`;
       
       try {
         await fetch('/api/whatsapp', {
@@ -1294,14 +1300,16 @@ export default function App() {
         await updateDoc(doc(db, 'assets', asset.id.toString()), { status: 'Normal' });
       }
 
-      const msg = `LAPORAN PENANGANAN PERBAIKAN ASET\n\n` +
-                  `- Nama Aset : ${item.name}\n` +
-                  `- Outlet : ${item.outlet}\n` +
-                  `- Penempatan : ${item.placement}\n` +
-                  `- Deskripsi Perbaikan : ${solveForm.desc}\n` +
-                  `- Verifikator : ${solveForm.verifier}\n` +
-                  `- Waktu Penanganan : ${new Date().toLocaleString('id-ID')}\n\n` +
-                  `Mohon Store melakukan pengetesan dan pengecekan ulang pada asset yang telah diperbaiki. Terimakasih`;
+      const msg = `*✅ LAPORAN PENANGANAN SELESAI*\n\n` +
+                  `*Detail Aset:* \n` +
+                  `• *Asset:* ${item.name} (${item.code})\n` +
+                  `• *Outlet:* ${item.outlet}\n` +
+                  `• *Lokasi:* ${item.placement}\n\n` +
+                  `*Detail Penanganan:* \n` +
+                  `• *Tindakan:* ${solveForm.desc}\n` +
+                  `• *Petugas:* ${solveForm.verifier}\n` +
+                  `• *Waktu:* ${new Date().toLocaleString('id-ID')}\n\n` +
+                  `_Mohon Store (Penanggung Jawab Outlet) melakukan pengetesan dan pengecekan ulang pada aset tersebut. Terimakasih._`;
       
       try {
         await fetch('/api/whatsapp', {
@@ -1673,7 +1681,7 @@ export default function App() {
   };
 
   return (
-    <div className="bg-[#f0f2f9] dark:bg-[#0a0b0e] text-slate-900 dark:text-slate-100 min-h-screen transition-colors duration-300 font-sans selection:bg-accent-purple selection:text-white flex items-center justify-center p-0 lg:p-6 relative overflow-hidden">
+    <div className="bg-[#f0f2f9] dark:bg-[#0a0b0e] text-slate-900 dark:text-slate-100 h-screen transition-colors duration-300 font-sans selection:bg-accent-purple selection:text-white flex items-center justify-center p-0 lg:p-6 relative overflow-hidden">
       <AnimatePresence>
         {isMobileMenuOpen && (
           <>
@@ -1691,8 +1699,8 @@ export default function App() {
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
               className="fixed inset-y-0 left-0 w-72 bg-sidebar-bg dark:bg-dark-sidebar text-white z-[201] lg:hidden flex flex-col shadow-2xl"
             >
-              <div className="p-8 pb-10">
-                <div className="flex items-center justify-between mb-10">
+              <div className="p-8 pb-4 flex-shrink-0">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-lg overflow-hidden p-0.5">
                       <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRT3HPi5oJMO5sRj1BwfuBsTVI0YsKJqEGy9w&s" alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -1703,67 +1711,69 @@ export default function App() {
                     <X className="w-4 h-4" />
                   </button>
                 </div>
+              </div>
 
-                <div className="space-y-6">
+              <div className="flex-1 overflow-y-auto no-scrollbar py-4 px-8">
+                <div className="space-y-6 text-left">
                   <div>
                     <span className="px-6 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Main Menu</span>
-                    <nav className="mt-2 space-y-1">
-                      {[
-                        { id: 'home', icon: Home, label: t.dashboard },
-                        { id: 'inventory', icon: LayoutList, label: t.inventory },
-                        { id: 'procurement', icon: ClipboardList, label: t.addProcurement },
-                        { id: 'procurement_list', icon: History, label: t.procurementList },
-                        { id: 'emergency', icon: AlertTriangle, label: t.emergency, variant: 'red' },
-                        { id: 'handling', icon: CheckSquare, label: t.handling },
-                      ].filter(tab => !isLocked(tab.id)).map((tab: any) => (
-                        <button
-                          key={tab.id}
-                          onClick={() => {
-                            setActiveTab(tab.id);
-                            setIsMobileMenuOpen(false);
-                          }}
-                          className={`w-full flex items-center gap-4 px-6 py-3.5 transition-all rounded-2xl ${activeTab === tab.id ? 'bg-gradient-primary text-white shadow-lg shadow-accent-purple/20' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
-                        >
-                          <tab.icon className={`w-5 h-5 flex-shrink-0 ${activeTab === tab.id ? 'text-white' : tab.variant === 'red' ? 'text-red-400' : 'text-slate-500'}`} />
-                          <span className="font-bold text-sm tracking-wide text-left">{tab.label}</span>
-                        </button>
-                      ))}
-                    </nav>
-                  </div>
+                      <nav className="mt-2 space-y-1">
+                        {[
+                          { id: 'home', icon: Home, label: t.dashboard },
+                          { id: 'inventory', icon: LayoutList, label: t.inventory },
+                          { id: 'procurement', icon: ClipboardList, label: t.addProcurement },
+                          { id: 'procurement_list', icon: History, label: t.procurementList },
+                          { id: 'emergency', icon: AlertTriangle, label: t.emergency, variant: 'red' },
+                          { id: 'handling', icon: CheckSquare, label: t.handling },
+                        ].filter(tab => !isLocked(tab.id)).map((tab: any) => (
+                          <button
+                            key={tab.id}
+                            onClick={() => {
+                              setActiveTab(tab.id);
+                              setIsMobileMenuOpen(false);
+                            }}
+                            className={`w-full flex items-center gap-4 px-6 py-3.5 transition-all rounded-2xl ${activeTab === tab.id ? 'bg-gradient-primary text-white shadow-lg shadow-accent-purple/20' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
+                          >
+                            <tab.icon className={`w-5 h-5 flex-shrink-0 ${activeTab === tab.id ? 'text-white' : tab.variant === 'red' ? 'text-red-400' : 'text-slate-500'}`} />
+                            <span className="font-bold text-sm tracking-wide text-left">{tab.label}</span>
+                          </button>
+                        ))}
+                      </nav>
+                    </div>
 
-                  {(() => {
-                    const mgmtTabs = [
-                      { id: 'input', icon: PlusSquare, label: t.inputAset },
-                      { id: 'categories', icon: Settings2, label: t.catMgmt },
-                      { id: 'vendors', icon: ShieldCheck, label: t.vendorMgmt },
-                      ...(currentUser?.type === 'Superadmin' ? [{ id: 'users', icon: Users, label: t.users }] : [])
-                    ].filter(tab => !isLocked(tab.id));
-                    
-                    if (mgmtTabs.length === 0) return null;
-                    
-                    return (
-                      <div>
-                        <span className="px-6 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Management</span>
-                        <nav className="mt-2 space-y-1">
-                          {mgmtTabs.map((tab: any) => (
-                            <button
-                              key={tab.id}
-                              onClick={() => {
-                                setActiveTab(tab.id);
-                                setIsMobileMenuOpen(false);
-                              }}
-                              className={`w-full flex items-center gap-4 px-6 py-3.5 transition-all rounded-2xl ${activeTab === tab.id ? 'bg-gradient-primary text-white shadow-lg shadow-accent-purple/20' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
-                            >
-                              <tab.icon className={`w-5 h-5 flex-shrink-0 ${activeTab === tab.id ? 'text-white' : 'text-slate-500'}`} />
-                              <span className="font-bold text-sm tracking-wide text-left">{tab.label}</span>
-                            </button>
-                          ))}
-                        </nav>
-                      </div>
-                    );
-                  })()}
+                    {(() => {
+                      const mgmtTabs = [
+                        { id: 'input', icon: PlusSquare, label: t.inputAset },
+                        { id: 'categories', icon: Settings2, label: t.catMgmt },
+                        { id: 'vendors', icon: ShieldCheck, label: t.vendorMgmt },
+                        ...(currentUser?.type === 'Superadmin' ? [{ id: 'users', icon: Users, label: t.users }] : [])
+                      ].filter(tab => !isLocked(tab.id));
+                      
+                      if (mgmtTabs.length === 0) return null;
+                      
+                      return (
+                        <div>
+                          <span className="px-6 py-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">Management</span>
+                          <nav className="mt-2 space-y-1">
+                            {mgmtTabs.map((tab: any) => (
+                              <button
+                                key={tab.id}
+                                onClick={() => {
+                                  setActiveTab(tab.id);
+                                  setIsMobileMenuOpen(false);
+                                }}
+                                className={`w-full flex items-center gap-4 px-6 py-3.5 transition-all rounded-2xl ${activeTab === tab.id ? 'bg-gradient-primary text-white shadow-lg shadow-accent-purple/20' : 'text-slate-500 hover:text-white hover:bg-white/5'}`}
+                              >
+                                <tab.icon className={`w-5 h-5 flex-shrink-0 ${activeTab === tab.id ? 'text-white' : 'text-slate-500'}`} />
+                                <span className="font-bold text-sm tracking-wide text-left">{tab.label}</span>
+                              </button>
+                            ))}
+                          </nav>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
-              </div>
 
               <div className="mt-auto p-8 pt-4 border-t border-white/5 space-y-6">
                 <div className="flex items-center gap-3 px-6">
@@ -1956,19 +1966,21 @@ export default function App() {
           
           {/* New Sidebar Navigation */}
           <aside className="hidden lg:flex flex-col w-72 bg-sidebar-bg dark:bg-dark-sidebar text-white shadow-2xl overflow-hidden relative z-20">
-            <div className="p-8 pb-10">
-              <div className="flex items-center gap-3 mb-10 px-2 mt-4">
+            <div className="p-8 pt-10 pb-4">
+              <div className="flex items-center gap-3 px-2 mt-4">
                 <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg overflow-hidden p-0.5">
                   <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRT3HPi5oJMO5sRj1BwfuBsTVI0YsKJqEGy9w&s" alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 </div>
                 <h1 className="text-xl font-extrabold tracking-tight leading-tight uppercase italic">{t.title}</h1>
               </div>
+            </div>
 
-              <div className="space-y-1 mb-8">
-                 <div className="px-6 py-2">
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Main Menu</span>
-                 </div>
-                 <nav className="space-y-1">
+            <div className="flex-1 overflow-y-auto no-scrollbar py-4 px-2">
+                <div className="space-y-1 mb-8">
+                   <div className="px-6 py-2">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Main Menu</span>
+                   </div>
+                   <nav className="space-y-1">
                   {[
                     { id: 'home', icon: Home, label: t.dashboard },
                     { id: 'inventory', icon: LayoutList, label: t.inventory, count: inventory.length },
@@ -2019,7 +2031,7 @@ export default function App() {
                      { id: 'input', icon: PlusSquare, label: t.inputAset },
                      { id: 'categories', icon: Settings2, label: t.catMgmt },
                      { id: 'vendors', icon: ShieldCheck, label: t.vendorMgmt },
-                     ...(isAdmin ? [{ id: 'users', icon: Users, label: t.users }] : [])
+                     ...(currentUser?.type === 'Superadmin' ? [{ id: 'users', icon: Users, label: t.users }] : [])
                    ].filter(tab => !isLocked(tab.id));
 
                    if (mgmtTabs.length === 0) return null;
@@ -2095,7 +2107,7 @@ export default function App() {
           </aside>
 
           {/* Main Content Area */}
-          <main className="flex-1 flex flex-col bg-dashboard-bg/50 dark:bg-dark-dashboard/50 backdrop-blur-sm relative z-10 overflow-x-hidden md:max-h-screen overflow-y-auto no-scrollbar">
+          <main className="flex-1 flex flex-col bg-dashboard-bg/50 dark:bg-dark-dashboard/50 backdrop-blur-sm relative z-10 overflow-x-hidden h-screen overflow-y-auto no-scrollbar">
             {/* Nav Header */}
             <header className="flex items-center justify-between p-6 lg:p-8 lg:px-10">
                <div className="flex items-center gap-3">
@@ -2282,9 +2294,16 @@ export default function App() {
                 </div>
                 <div className="pt-4 flex gap-4">
                   <button type="button" onClick={() => setSolvingReportId(null)} className="flex-1 py-5 bg-slate-100 dark:bg-white/5 text-slate-400 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all">Batal</button>
-                  <button type="submit" className="flex-1 py-5 bg-gradient-primary text-white rounded-full font-black text-[10px] uppercase tracking-widest hover:scale-[1.02] active:scale-[0.98] shadow-xl shadow-accent-purple/20 flex items-center justify-center gap-3 transition-all">
-                    <CheckCircle className="w-4 h-4" /> Kirim & Selesai
-                  </button>
+                  <motion.button 
+                    whileHover={{ scale: 1.02, translateY: -2 }}
+                    whileTap={{ scale: 0.98 }}
+                    type="submit" 
+                    className="flex-1 py-5 bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 text-white rounded-full font-black text-[10px] uppercase tracking-widest shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-3 transition-all relative overflow-hidden group"
+                  >
+                    <div className="absolute inset-0 bg-white/10 translate-x-[-100%] group-hover:translate-x-0 transition-transform duration-500"></div>
+                    <CheckCircle className="w-4 h-4 relative z-10" /> 
+                    <span className="relative z-10">Kirim & Selesai</span>
+                  </motion.button>
                 </div>
               </form>
             </motion.div>
@@ -3306,12 +3325,16 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
             </div>
           </div>
         </div>
-        <button 
+        <motion.button 
+          whileHover={{ scale: 1.02, translateY: -4 }}
+          whileTap={{ scale: 0.98 }}
           type="submit" 
-          className="w-full bg-gradient-to-r from-red-500 to-rose-600 text-white py-6 rounded-[32px] font-black shadow-2xl shadow-red-500/30 hover:shadow-red-500/50 hover:-translate-y-1 transition-all duration-300 transform active:scale-[0.98] mt-6 flex items-center justify-center gap-4 uppercase text-[11px] tracking-[0.2em]"
+          className="w-full bg-gradient-to-r from-red-500 via-rose-600 to-red-700 text-white py-6 rounded-[32px] font-black shadow-2xl shadow-red-500/40 hover:shadow-red-500/60 transition-all duration-300 mt-6 flex items-center justify-center gap-4 uppercase text-[11px] tracking-[0.2em] relative overflow-hidden group"
         >
-           <Send className="w-5 h-5" /> {t.sendEmg}
-        </button>
+          <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
+          <Send className="w-5 h-5 relative z-10" /> 
+          <span className="relative z-10">{t.sendEmg}</span>
+        </motion.button>
       </form>
     </div>
   );
