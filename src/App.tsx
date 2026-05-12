@@ -1749,7 +1749,24 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-auto p-8 pt-4 border-t border-white/5">
+              <div className="mt-auto p-8 pt-4 border-t border-white/5 space-y-6">
+                <div className="flex items-center gap-3 px-6">
+                  <div className="w-10 h-10 rounded-2xl overflow-hidden shadow-lg bg-gradient-primary p-0.5 flex-shrink-0">
+                    <div className="w-full h-full bg-dark-sidebar rounded-[14px] p-0.5">
+                      <img 
+                        src={`https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser?.name || '')}&background=9b51e0&color=fff`} 
+                        alt={currentUser?.name} 
+                        className="w-full h-full object-cover rounded-[12px]"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-black text-white truncate">{currentUser?.name.split(' ').slice(0, 2).join(' ')}</h4>
+                    <p className="text-[10px] text-accent-pink truncate font-black uppercase tracking-wider">{currentUser?.type}</p>
+                  </div>
+                </div>
+
                 <button onClick={handleLogout} className="w-full flex items-center gap-4 px-6 py-4 text-slate-500 hover:text-red-400 transition-all rounded-2xl hover:bg-white/5">
                   <LogOut className="w-5 h-5" />
                   <span className="text-xs font-black uppercase tracking-widest">{t.logout}</span>
@@ -2046,7 +2063,7 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h4 className="text-sm font-black text-white truncate">{currentUser?.name.split(' ')[0]}</h4>
+                  <h4 className="text-sm font-black text-white truncate">{currentUser?.name.split(' ').slice(0, 2).join(' ')}</h4>
                   <p className="text-[10px] text-accent-pink truncate font-black uppercase tracking-wider">{currentUser?.type}</p>
                 </div>
               </div>
