@@ -1072,6 +1072,7 @@ export default function App() {
         index + 1,
         item.name,
         item.code,
+        item.category || '-',
         item.outlet,
         item.placement,
         item.date,
@@ -1086,6 +1087,7 @@ export default function App() {
         'No',
         lang === 'id' ? 'Nama Aset' : 'Asset Name',
         lang === 'id' ? 'Kode Aset' : 'Asset Code',
+        lang === 'id' ? 'Kategori' : 'Category',
         'Outlet',
         lang === 'id' ? 'Penempatan' : 'Placement',
         lang === 'id' ? 'Tgl Pengadaan' : 'Procurement Date',
@@ -1097,9 +1099,9 @@ export default function App() {
       startY: 20,
       styles: { fontSize: 7, cellPadding: 2, overflow: 'linebreak' },
       columnStyles: {
-        8: { cellWidth: 80 } // Wider column for history
+        9: { cellWidth: 80 } // Wider column for history
       },
-      headStyles: { fillColor: [100, 80, 60] }
+      headStyles: { fillColor: [155, 81, 224] }
     });
 
     docPdf.save(`Laporan_Aset_Detail_${dateRange.start || 'All'}_to_${dateRange.end || 'All'}.pdf`);
@@ -1418,13 +1420,20 @@ export default function App() {
       "No",
       lang === 'id' ? "Nama Aset" : "Asset Name",
       lang === 'id' ? "Kode Aset" : "Asset Code",
+      lang === 'id' ? "Kategori" : "Category",
       "Outlet",
       lang === 'id' ? "Penempatan" : "Placement",
+      lang === 'id' ? "Harga" : "Price",
+      lang === 'id' ? "Satuan" : "Unit",
+      lang === 'id' ? "Jumlah" : "Quantity",
       lang === 'id' ? "Tanggal Pengadaan" : "Procurement Date",
       lang === 'id' ? "Usia Aset" : "Asset Age",
       lang === 'id' ? "Kondisi Aset" : "Asset Condition",
-      lang === 'id' ? "Semua Riwayat Aset" : "All Asset History"
+      lang === 'id' ? "Verifikator" : "Verifier",
+      lang === 'id' ? "Semua Riwayat Aset (Pemisah |)" : "All Asset History (Pipe Separated)"
     ];
+
+    const separator = ";"; // Better for Indonesian locale Excel auto-detection
 
     const rows = assetsToExport.map((item, index) => {
       const itemActivities = filteredActivities
@@ -1433,36 +1442,43 @@ export default function App() {
       
       const historyStr = itemActivities.map(a => {
         const dateStr = new Date(a.timestamp).toLocaleDateString('id-ID');
-        return `[${dateStr}] ${a.type}: ${a.description}`;
-      }).join(' | '); // Use pipe for CSV readability
+        return `[${dateStr}] ${a.type}: ${a.description.replace(/["\n\r;]/g, ' ')}`;
+      }).join(' | ');
 
       return [
         index + 1,
-        `"${item.name}"`,
-        `"${item.code}"`,
-        `"${item.outlet}"`,
-        `"${item.placement}"`,
-        `"${item.date}"`,
+        `"${(item.name || '').replace(/"/g, '""')}"`,
+        `"${(item.code || '').replace(/"/g, '""')}"`,
+        `"${(item.category || '').replace(/"/g, '""')}"`,
+        `"${(item.outlet || '').replace(/"/g, '""')}"`,
+        `"${(item.placement || '').replace(/"/g, '""')}"`,
+        `"${item.price || 0}"`,
+        `"${(item.unit || '').replace(/"/g, '""')}"`,
+        `"${item.quantity || 0}"`,
+        `"${item.date || ''}"`,
         `"${calculateAge(item.date)}"`,
-        `"${item.condition}"`,
-        `"${historyStr}"`
+        `"${(item.condition || '').replace(/"/g, '""')}"`,
+        `"${(item.verifier || '').replace(/"/g, '""')}"`,
+        `"${historyStr.replace(/"/g, '""')}"`
       ];
     });
 
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + headers.join(",") + "\n" 
-      + rows.map(e => e.join(",")).join("\n");
+    const csvContent = "\ufeff" + headers.join(separator) + "\n" 
+      + rows.map(e => e.join(separator)).join("\n");
 
-    const encodedUri = encodeURI(csvContent);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    const fileName = `Export_Inventory_${dateRange.start || 'All'}_to_${dateRange.end || 'All'}.csv`;
+    link.setAttribute("href", url);
+    const fileName = `Export_Inventory_Detailed_${dateRange.start || 'All'}_to_${dateRange.end || 'All'}.csv`;
     link.setAttribute("download", fileName);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
     setShowExportModal(false);
-    showToast("Berhasil ekspor Spreadsheet!");
+    showToast(lang === 'id' ? "Berhasil ekspor Spreadsheet Detail!" : "Detailed Spreadsheet Exported!");
   };
 
   // Nav Helpers
@@ -2322,7 +2338,7 @@ export default function App() {
                   {exportMode === 'pdf' ? (
                     <button 
                       onClick={exportPDF} 
-                      className="w-full py-5 bg-sidebar-bg dark:bg-accent-brown text-white rounded-full font-black text-[10px] uppercase tracking-widest shadow-xl shadow-sidebar-bg/20 transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3"
+                      className="w-full py-5 bg-gradient-to-r from-accent-purple to-accent-pink text-white rounded-full font-black text-[10px] uppercase tracking-widest shadow-xl shadow-accent-purple/20 transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3"
                     >
                       <Download className="w-4 h-4" /> Download PDF Report
                     </button>
@@ -2950,7 +2966,7 @@ const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, set
               setExportMode('pdf');
               setShowExportModal(true);
             }}
-            className="flex items-center gap-3 px-6 py-4 bg-sidebar-bg dark:bg-accent-brown text-white rounded-2xl text-xs font-bold hover:bg-accent-brown transition shadow-lg shadow-sidebar-bg/20"
+            className="flex items-center gap-3 px-6 py-4 bg-white dark:bg-white/10 border border-slate-200 dark:border-white/10 text-slate-800 dark:text-white rounded-2xl text-xs font-bold hover:bg-slate-50 dark:hover:bg-white/20 transition-all shadow-lg shadow-slate-200/50 dark:shadow-none"
           >
             <Download className="w-4 h-4" /> Export PDF
           </button>

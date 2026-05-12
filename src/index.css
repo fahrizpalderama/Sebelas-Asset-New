@@ -11,6 +11,8 @@
   --color-accent-purple: #9b51e0;
   --color-accent-pink: #e051ae;
   --color-accent-blue: #5196e0;
+  --color-accent-brown: #8b4513;
+  --color-accent-tan: #f5f5dc;
   
   /* Gradien variables for ease of use */
   --gradient-primary: linear-gradient(90deg, #9b51e0 0%, #e051ae 100%);
