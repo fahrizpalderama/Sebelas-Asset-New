@@ -65,6 +65,7 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
+  Plus,
   LogOut,
   Settings,
   Bell,
@@ -75,7 +76,8 @@ import {
   Settings2,
   Clock,
   Menu,
-  Table2
+  Table2,
+  BookOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Asset, Report, User as UserType, UserRole, Vendor, AssetActivity, ProcurementRecord } from './types';
@@ -98,7 +100,12 @@ import {
   onSnapshot, 
   updateDoc,
   deleteDoc,
-  orderBy
+  orderBy,
+  startAfter,
+  getDocs,
+  where,
+  limit,
+  getDocFromServer
 } from 'firebase/firestore';
 
 const DigitalClock = React.memo(() => {
@@ -276,6 +283,13 @@ export default function App() {
       dateAsc: "Tanggal (Baru-Lama)",
       dateDesc: "Tanggal (Lama-Baru)",
       exportRange: "Pilih Rentang Tanggal",
+      guides: "Panduan",
+      guidesTitle: "Pusat Panduan & Tutorial",
+      guidesSub: "Kumpulan panduan kerja dan tutorial SOP.",
+      guideTitleLabel: "Judul Panduan",
+      guideCatLabel: "Kategori Panduan",
+      guideContentLabel: "Deskripsi dan Isi Panduan",
+      addGuide: "Tambah Panduan Baru",
     },
     en: {
       title: "SEBELAS COFFEE",
@@ -397,6 +411,13 @@ export default function App() {
       dateAsc: "Date (New-Old)",
       dateDesc: "Date (Old-New)",
       exportRange: "Select Date Range",
+      guides: "Guides",
+      guidesTitle: "Guides & Tutorials Center",
+      guidesSub: "Collection of work guides and SOP tutorials.",
+      guideTitleLabel: "Guide Title",
+      guideCatLabel: "Guide Category",
+      guideContentLabel: "Description and Guide Content",
+      addGuide: "Add New Guide",
     }
   }[lang]), [lang]);
 
@@ -413,9 +434,11 @@ export default function App() {
   const [categoryVendors, setCategoryVendors] = useState<{id: string, name: string}[]>([]);
   const [categoryOwnerships, setCategoryOwnerships] = useState<{id: string, name: string}[]>([]);
   const [categoryPriorities, setCategoryPriorities] = useState<{id: string, name: string}[]>([]);
+  const [categoryGuides, setCategoryGuides] = useState<{id: string, name: string}[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [assetActivities, setAssetActivities] = useState<AssetActivity[]>([]);
   const [procurements, setProcurements] = useState<ProcurementRecord[]>([]);
+  const [guides, setGuides] = useState<any[]>([]);
   const [activeCatSub, setActiveCatSub] = useState<'Service' | 'Procurement'>('Service');
   const [vendorForm, setVendorForm] = useState<Partial<Vendor>>({});
 
@@ -439,8 +462,48 @@ export default function App() {
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editUserForm, setEditUserForm] = useState<Partial<UserType>>({});
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
+  const [editingGuideId, setEditingGuideId] = useState<string | null>(null);
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
   const [editAssetForm, setEditAssetForm] = useState<Partial<Asset>>({});
+  const [guideForm, setGuideForm] = useState({ title: '', category: '', content: '' });
+  const [isOffline, setIsOffline] = useState(false);
+  const [lastVisibleAsset, setLastVisibleAsset] = useState<any>(null);
+  const [hasMoreAssets, setHasMoreAssets] = useState(true);
+  const [assetsLoading, setAssetsLoading] = useState(false);
+  const [summaryStats, setSummaryStats] = useState<any>(null);
+  const [allAssetRefs, setAllAssetRefs] = useState<any[]>([]);
+
+  // Firestore Error Handler
+  const handleFirestoreError = (error: any, operationType: string, path: string | null) => {
+    const errInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      operationType,
+      path,
+      code: error.code || 'unknown',
+      auth: auth.currentUser?.uid || 'not-signed-in'
+    };
+    
+    if (errInfo.code === 'unavailable') {
+      setIsOffline(true);
+      console.error("Firestore is currently unavailable. This is usually due to network issues or database misconfiguration.", JSON.stringify(errInfo));
+    } else {
+      console.error("Firestore Error:", JSON.stringify(errInfo));
+    }
+  };
+
+  // Connection Test Effect
+  useEffect(() => {
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'test-connection', 'check'));
+        console.log("Firestore connection successful");
+        setIsOffline(false);
+      } catch (error: any) {
+        handleFirestoreError(error, 'GET_DOC_FROM_SERVER', 'test-connection/check');
+      }
+    };
+    testConnection();
+  }, []);
 
   // Memoized Vendor Categories for dropdowns
   const vendorCategories = useMemo(() => {
@@ -575,11 +638,11 @@ export default function App() {
     return {
       resolved,
       pending,
-      totalAssets: inventory.length,
+      totalAssets: allAssetRefs.length,
       sortedOutletStats,
       completionRate
     };
-  }, [reports, inventory]);
+  }, [reports, inventory, allAssetRefs]);
 
   const chartData = useMemo(() => [
     { name: 'Mon', tasks: 12, spend: 120 },
@@ -599,20 +662,52 @@ export default function App() {
       return;
     }
 
-    const qAssets = query(collection(db, 'assets'));
+    // Fetch Summary Stats
+    const qStats = doc(db, 'settings', 'statistics');
+    const unsubscribeStats = onSnapshot(qStats, (snapshot) => {
+      if (snapshot.exists()) {
+        setSummaryStats(snapshot.data());
+      }
+    }, (error) => {
+      console.error("Stats Listener Error:", error);
+    });
+
+    // Fetch minimal asset info once for dropdowns (Emergency View)
+    const fetchAssetRefs = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'assets'));
+        setAllAssetRefs(snap.docs.map(d => ({
+          id: d.id,
+          name: d.data().name,
+          code: d.data().code,
+          outlet: d.data().outlet,
+          placement: d.data().placement,
+          category: d.data().category
+        })));
+      } catch (err) {
+        console.error("Fetch Asset Refs Error:", err);
+      }
+    };
+    fetchAssetRefs();
+
+    const qAssets = query(collection(db, 'assets'), orderBy('name'), limit(50));
     const unsubscribeAssets = onSnapshot(qAssets, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Asset));
       setInventory(items);
+      setLastVisibleAsset(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMoreAssets(snapshot.docs.length === 50);
+      setIsOffline(false);
     }, (error) => {
-      console.error("Assets Listener Error:", error);
+      handleFirestoreError(error, 'LIST_ASSETS', 'assets');
     });
 
-    const qReports = query(collection(db, 'reports'), orderBy('timestamp', 'desc'));
+    const qReports = query(collection(db, 'reports'), orderBy('timestamp', 'desc'), limit(100));
     const unsubscribeReports = onSnapshot(qReports, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Report));
       setReports(items);
+      setIsOffline(false);
     }, (error) => {
-      console.error("Reports Listener Error:", error);
+      handleFirestoreError(error, 'LIST_REPORTS', 'reports');
     });
 
     let unsubscribeUsers = () => {};
@@ -621,8 +716,9 @@ export default function App() {
       unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
         const items = snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id } as UserType));
         setAllUsers(items);
+        setIsOffline(false);
       }, (error) => {
-        console.error("Users Listener Error:", error);
+        handleFirestoreError(error, 'LIST_USERS', 'users');
       });
     }
 
@@ -630,8 +726,9 @@ export default function App() {
     const unsubscribeCatOutlets = onSnapshot(qCatOutlets, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
       setCategoryOutlets(items);
+      setIsOffline(false);
     }, (error) => {
-      console.error("CatOutlets Listener Error:", error);
+      handleFirestoreError(error, 'LIST_CAT_OUTLETS', 'category_outlets');
     });
 
     const qCatPlacements = query(collection(db, 'category_placements'), orderBy('name'));
@@ -666,6 +763,14 @@ export default function App() {
       console.error("CatPriorities Listener Error:", error);
     });
 
+    const qCatGuides = query(collection(db, 'category_guides'), orderBy('name'));
+    const unsubscribeCatGuides = onSnapshot(qCatGuides, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
+      setCategoryGuides(items);
+    }, (error) => {
+      console.error("CatGuides Listener Error:", error);
+    });
+
     const qVendorsService = query(collection(db, 'vendors_service'));
     const unsubscribeVendorsService = onSnapshot(qVendorsService, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Vendor));
@@ -682,20 +787,27 @@ export default function App() {
       console.error("VendorsProcurement Listener Error:", error);
     });
 
-    const unsubscribeActivities = onSnapshot(query(collection(db, 'asset_activities'), orderBy('timestamp', 'desc')), (snapshot) => {
+    const unsubscribeActivities = onSnapshot(query(collection(db, 'asset_activities'), orderBy('timestamp', 'desc'), limit(100)), (snapshot) => {
       setAssetActivities(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AssetActivity)));
     }, (error) => {
       console.error("Activities Listener Error:", error);
     });
 
-    const unsubscribeProcurements = onSnapshot(query(collection(db, 'procurements'), orderBy('timestamp', 'desc')), (snapshot) => {
+    const unsubscribeProcurements = onSnapshot(query(collection(db, 'procurements'), orderBy('timestamp', 'desc'), limit(100)), (snapshot) => {
       setProcurements(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProcurementRecord)));
     }, (error) => {
       console.error("Procurements Listener Error:", error);
     });
 
+    const unsubscribeGuides = onSnapshot(query(collection(db, 'guides'), orderBy('timestamp', 'desc'), limit(100)), (snapshot) => {
+      setGuides(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => {
+      console.error("Guides Listener Error:", error);
+    });
+
     return () => {
       unsubscribeAssets();
+      unsubscribeStats();
       unsubscribeReports();
       unsubscribeUsers();
       unsubscribeCatOutlets();
@@ -703,10 +815,12 @@ export default function App() {
       unsubscribeCatVendors();
       unsubscribeCatOwnerships();
       unsubscribeCatPriorities();
+      unsubscribeCatGuides();
       unsubscribeVendorsService();
       unsubscribeVendorsProcurement();
       unsubscribeActivities();
       unsubscribeProcurements();
+      unsubscribeGuides();
     };
   }, [currentUser]);
 
@@ -715,18 +829,23 @@ export default function App() {
     localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
-  // Inactivity Timeout (15 minutes)
+  // Inactivity Timeout (10 minutes)
   useEffect(() => {
     if (!currentUser) return;
 
     let timeoutId: any;
 
+    const performAutoLogout = async () => {
+      await signOut(auth);
+      setCurrentUser(null);
+      setActiveTab('home');
+      setAuthMode(null);
+      showToast(lang === 'id' ? "Sesi berakhir karena tidak ada aktivitas selama 10 menit." : "Session expired due to 10 minutes of inactivity.", true);
+    };
+
     const resetTimer = () => {
       if (timeoutId) clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        handleLogout();
-        showToast(lang === 'id' ? "Sesi berakhir karena tidak ada aktivitas selama 15 menit." : "Session expired due to 15 minutes of inactivity.", true);
-      }, 15 * 60 * 1000);
+      timeoutId = setTimeout(performAutoLogout, 10 * 60 * 1000);
     };
 
     const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
@@ -744,6 +863,84 @@ export default function App() {
   const showToast = (message: string, isError = false) => {
     setToast({ message, isError });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const loadMoreAssets = async () => {
+    if (!lastVisibleAsset || !hasMoreAssets || assetsLoading) return;
+    
+    setAssetsLoading(true);
+    try {
+      const nextQ = query(
+        collection(db, 'assets'),
+        orderBy('name'),
+        startAfter(lastVisibleAsset),
+        limit(50)
+      );
+      
+      const snapshot = await getDocs(nextQ);
+      const newItems = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Asset));
+      
+      setInventory(prev => [...prev, ...newItems]);
+      setLastVisibleAsset(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMoreAssets(snapshot.docs.length === 50);
+    } catch (error) {
+      console.error("Load More Assets error:", error);
+    } finally {
+      setAssetsLoading(false);
+    }
+  };
+
+  const refreshDashboardAggregation = async () => {
+    if (!isAdmin) return;
+    showToast(lang === 'id' ? "Memulai agregasi data..." : "Starting data aggregation...");
+    
+    try {
+      // Fetch ALL assets (this is the one-time operation user requested to avoid in real-time)
+      const allAssetsSnap = await getDocs(collection(db, 'assets'));
+      const allAssets = allAssetsSnap.docs.map(d => d.data() as Asset);
+      
+      const allReportsSnap = await getDocs(collection(db, 'reports'));
+      const allReports = allReportsSnap.docs.map(d => ({ ...d.data(), id: d.id } as Report));
+      
+      const getReportStats = (days: number) => {
+        const now = new Date();
+        let cutoff: Date;
+        if (days === 0) {
+          cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        } else {
+          cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+        }
+        const filtered = allReports.filter(r => new Date(r.timestamp) >= cutoff);
+        return [
+          { name: lang === 'id' ? 'Kerusakan' : 'Damaged', value: filtered.length },
+          { name: lang === 'id' ? 'Perbaikan' : 'Resolved', value: filtered.filter(r => r.status === 'resolved').length }
+        ];
+      };
+
+      const stats = {
+        totalAssets: allAssets.length,
+        totalPrice: allAssets.reduce((sum, a) => sum + (Number(a.price) || 0), 0),
+        pendingReports: allReports.filter(r => r.status === 'pending').length,
+        resolvedReports: allReports.filter(r => r.status === 'resolved').length,
+        totalReports: allReports.length,
+        assetStatsByOutlet: categoryOutlets.map(cat => ({
+          name: cat.name,
+          count: allAssets.filter(a => a.outlet === cat.name).length,
+          totalPrice: allAssets.filter(a => a.outlet === cat.name).reduce((sum, a) => sum + (Number(a.price) || 0), 0)
+        })).filter(s => s.count > 0),
+        reportStats0: getReportStats(0),
+        reportStats7: getReportStats(7),
+        reportStats15: getReportStats(15),
+        reportStats30: getReportStats(30),
+        lastUpdated: new Date().toISOString()
+      };
+      
+      await setDoc(doc(db, 'settings', 'statistics'), stats);
+      showToast(lang === 'id' ? "Statistik berhasil diperbarui!" : "Statistics successfully updated!");
+    } catch (error) {
+      console.error("Aggregation error:", error);
+      showToast("Error updating stats", true);
+    }
   };
 
   const formatRupiah = (number: number) => {
@@ -876,7 +1073,7 @@ export default function App() {
     }, lang === 'id' ? 'Hapus' : 'Delete');
   };
 
-  const handleAddCategory = async (type: 'outlet' | 'placement' | 'vendor' | 'ownership' | 'priority', name: string) => {
+  const handleAddCategory = async (type: 'outlet' | 'placement' | 'vendor' | 'ownership' | 'priority' | 'guide', name: string) => {
     if (!name.trim()) return;
     if (!isAdmin) {
       showToast("Hanya Manajemen yang bisa menambah kategori!", true);
@@ -886,7 +1083,8 @@ export default function App() {
       const collectionName = type === 'outlet' ? 'category_outlets' : 
                              type === 'placement' ? 'category_placements' : 
                              type === 'vendor' ? 'category_vendors' :
-                             type === 'ownership' ? 'category_ownerships' : 'category_priorities';
+                             type === 'ownership' ? 'category_ownerships' :
+                             type === 'priority' ? 'category_priorities' : 'category_guides';
       await addDoc(collection(db, collectionName), { name });
       showToast("Kategori berhasil ditambahkan!");
     } catch (err: any) {
@@ -894,7 +1092,7 @@ export default function App() {
     }
   };
 
-  const handleDeleteCategory = async (type: 'outlet' | 'placement' | 'vendor' | 'ownership' | 'priority', id: string) => {
+  const handleDeleteCategory = async (type: 'outlet' | 'placement' | 'vendor' | 'ownership' | 'priority' | 'guide', id: string) => {
     if (!isAdmin) {
       showToast("Hanya Manajemen yang bisa menghapus kategori!", true);
       return;
@@ -904,7 +1102,8 @@ export default function App() {
         const collectionName = type === 'outlet' ? 'category_outlets' : 
                                type === 'placement' ? 'category_placements' : 
                                type === 'vendor' ? 'category_vendors' :
-                               type === 'ownership' ? 'category_ownerships' : 'category_priorities';
+                               type === 'ownership' ? 'category_ownerships' :
+                               type === 'priority' ? 'category_priorities' : 'category_guides';
         await deleteDoc(doc(db, collectionName, id));
         showToast("Kategori berhasil dihapus!");
       } catch (err: any) {
@@ -961,6 +1160,48 @@ export default function App() {
         showToast(err.message, true);
       }
     }, lang === 'id' ? 'Hapus Semua' : 'Delete All');
+  };
+
+  const handleGuideSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!guideForm.title || !guideForm.category || !guideForm.content) {
+      showToast(lang === 'id' ? "Semua field harus diisi!" : "All fields are required!", true);
+      return;
+    }
+
+    try {
+      if (editingGuideId) {
+        await updateDoc(doc(db, 'guides', editingGuideId), {
+          ...guideForm,
+          updatedAt: new Date().toISOString()
+        });
+        showToast(lang === 'id' ? "Panduan berhasil diperbarui!" : "Guide successfully updated!");
+      } else {
+        await addDoc(collection(db, 'guides'), {
+          ...guideForm,
+          createdBy: currentUser?.name || 'Anonymous',
+          timestamp: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        showToast(lang === 'id' ? "Panduan baru berhasil ditambahkan!" : "New guide successfully added!");
+      }
+      setGuideForm({ title: '', category: '', content: '' });
+      setEditingGuideId(null);
+    } catch (err: any) {
+      showToast(err.message, true);
+    }
+  };
+
+  const handleDeleteGuide = async (id: string) => {
+    if (!isAdmin) return;
+    openConfirm(t.guides, lang === 'id' ? "Hapus panduan ini?" : "Delete this guide?", async () => {
+      try {
+        await deleteDoc(doc(db, 'guides', id));
+        showToast(lang === 'id' ? "Panduan berhasil dihapus!" : "Guide successfully deleted!");
+      } catch (err: any) {
+        showToast(err.message, true);
+      }
+    }, lang === 'id' ? 'Hapus' : 'Delete');
   };
 
   // Image Helper
@@ -1130,7 +1371,8 @@ export default function App() {
         unit: assetForm.unit || 'Pcs',
         quantity: Number(assetForm.quantity) || 1,
         ownership: assetForm.ownership || '',
-        priority: assetForm.priority || ''
+        priority: assetForm.priority || '',
+        createdAt: new Date().toISOString()
       };
 
       await addDoc(collection(db, 'assets'), newAsset);
@@ -1502,7 +1744,7 @@ export default function App() {
     
     // Store Manager Restrictions
     if (currentUser.type === 'Store Manager') {
-      const allowed = ['home', 'inventory', 'emergency', 'handling'];
+      const allowed = ['home', 'inventory', 'emergency', 'handling', 'guides'];
       if (!allowed.includes(tab)) return true;
     }
 
@@ -1524,6 +1766,10 @@ export default function App() {
             dashResolvedRange={dashResolvedRange}
             dashboardStats={dashboardStats}
             lang={lang}
+            summaryStats={summaryStats}
+            isAdmin={isAdmin}
+            refreshDashboardAggregation={refreshDashboardAggregation}
+            allAssetRefs={allAssetRefs}
           />
         );
       case 'input':
@@ -1563,6 +1809,9 @@ export default function App() {
             calculateAge={calculateAge}
             isAdmin={isAdmin}
             setPreviewPhoto={setPreviewPhoto}
+            hasMoreAssets={hasMoreAssets}
+            assetsLoading={assetsLoading}
+            loadMoreAssets={loadMoreAssets}
           />
         );
       case 'emergency':
@@ -1570,7 +1819,7 @@ export default function App() {
           <EmergencyView 
             t={t}
             lang={lang}
-            inventory={inventory}
+            inventory={allAssetRefs}
             emergencyForm={emergencyForm}
             setEmergencyForm={setEmergencyForm}
             handleEmergencySubmit={handleEmergencySubmit}
@@ -1653,6 +1902,7 @@ export default function App() {
             categoryVendors={categoryVendors}
             categoryOwnerships={categoryOwnerships}
             categoryPriorities={categoryPriorities}
+            categoryGuides={categoryGuides}
             handleCategorySubmit={handleAddCategory}
             handleDeleteCategory={handleDeleteCategory}
           />
@@ -1673,6 +1923,22 @@ export default function App() {
             editingVendorId={editingVendorId}
             setEditingVendorId={setEditingVendorId}
             currentUser={currentUser}
+          />
+        );
+      case 'guides':
+        return (
+          <GuideView 
+            t={t}
+            lang={lang}
+            guides={guides}
+            categoryGuides={categoryGuides}
+            guideForm={guideForm}
+            setGuideForm={setGuideForm}
+            handleGuideSubmit={handleGuideSubmit}
+            handleDeleteGuide={handleDeleteGuide}
+            editingGuideId={editingGuideId}
+            setEditingGuideId={setEditingGuideId}
+            isAdmin={isAdmin}
           />
         );
       default:
@@ -1725,6 +1991,7 @@ export default function App() {
                           { id: 'procurement_list', icon: History, label: t.procurementList },
                           { id: 'emergency', icon: AlertTriangle, label: t.emergency, variant: 'red' },
                           { id: 'handling', icon: CheckSquare, label: t.handling },
+                          { id: 'guides', icon: BookOpen, label: t.guides },
                         ].filter(tab => !isLocked(tab.id)).map((tab: any) => (
                           <button
                             key={tab.id}
@@ -1988,6 +2255,7 @@ export default function App() {
                     { id: 'procurement_list', icon: History, label: t.procurementList },
                     { id: 'handling', icon: CheckSquare, label: t.handling, count: reports.filter(r => r.status !== 'resolved').length },
                     { id: 'emergency', icon: AlertTriangle, label: t.emergency, variant: 'red' },
+                    { id: 'guides', icon: BookOpen, label: t.guides },
                   ].filter(tab => !isLocked(tab.id)).map((tab: any) => {
                     const isActive = activeTab === tab.id;
                     const locked = isLocked(tab.id);
@@ -2108,6 +2376,14 @@ export default function App() {
 
           {/* Main Content Area */}
           <main className="flex-1 flex flex-col bg-dashboard-bg/50 dark:bg-dark-dashboard/50 backdrop-blur-sm relative z-10 overflow-x-hidden h-screen overflow-y-auto no-scrollbar">
+            {isOffline && (
+              <div className="bg-red-500/10 border-b border-red-500/20 px-8 py-2 flex items-center justify-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-500" />
+                <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">
+                  {lang === 'id' ? 'Koneksi Firestore Gagal - Periksa Konfigurasi Database' : 'Firestore Connection Failed - Please Check Database Config'}
+                </span>
+              </div>
+            )}
             {/* Nav Header */}
             <header className="flex items-center justify-between p-6 lg:p-8 lg:px-10">
                <div className="flex items-center gap-3">
@@ -2570,24 +2846,63 @@ export default function App() {
 }
 
 // Performance Optimized Views
-const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang }: any) => {
+const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summaryStats, isAdmin, refreshDashboardAggregation, allAssetRefs }: any) => {
   const [range, setRange] = useState<'0' | '7' | '15' | '30'>('15');
   
   const currentReportStats = useMemo(() => {
+    if (summaryStats) {
+      switch (range) {
+        case '0': return summaryStats.reportStats0 || [];
+        case '7': return summaryStats.reportStats7 || [];
+        case '30': return summaryStats.reportStats30 || [];
+        default: return summaryStats.reportStats15 || [];
+      }
+    }
     switch (range) {
       case '0': return dashboardStats.reportStats0;
       case '7': return dashboardStats.reportStats7;
       case '30': return dashboardStats.reportStats30;
       default: return dashboardStats.reportStats15;
     }
-  }, [dashboardStats, range]);
+  }, [dashboardStats, summaryStats, range]);
+
+  // Use aggregated summaryStats if available, fallback to real-time (which might be partial due to pagination)
+  const displayStats = useMemo(() => {
+    if (summaryStats) {
+      return {
+        totalAssets: summaryStats.totalAssets,
+        pendingReports: summaryStats.pendingReports,
+        resolvedReports: summaryStats.resolvedReports,
+        completionRate: summaryStats.totalReports > 0 ? Math.round((summaryStats.resolvedReports / summaryStats.totalReports) * 100) : 0,
+        outletData: summaryStats.assetStatsByOutlet || [],
+        totalPrice: summaryStats.totalPrice || 0,
+        lastUpdated: summaryStats.lastUpdated
+      };
+    }
+    return {
+      totalAssets: allAssetRefs.length,
+      pendingReports: stats.pending.length,
+      resolvedReports: stats.resolved.length,
+      completionRate: stats.completionRate,
+      outletData: dashboardStats.outletData,
+      totalPrice: dashboardStats.totalPrice,
+      lastUpdated: null
+    };
+  }, [summaryStats, stats, dashboardStats, allAssetRefs]);
 
   return (
     <div className="space-y-10 animate-in fade-in transition-all duration-700">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-4">
         <div className="space-y-1">
           <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight uppercase">Dashboard</h2>
-          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">{lang === 'id' ? 'Statistik Manajemen Aset' : 'Asset Management Statistics'}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{lang === 'id' ? 'Statistik Manajemen Aset' : 'Asset Management Statistics'}</p>
+            {displayStats.lastUpdated && (
+              <span className="text-[8px] text-slate-300 font-black uppercase">
+                (Last Aggregated: {new Date(displayStats.lastUpdated).toLocaleString()})
+              </span>
+            )}
+          </div>
         </div>
         
         <div className="flex items-center gap-4 bg-white/50 dark:bg-white/5 p-2 rounded-2xl border border-slate-100 dark:border-white/5 backdrop-blur-xl">
@@ -2595,18 +2910,24 @@ const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang }: an
               <Calendar className="w-4 h-4 text-accent-purple" />
               <DigitalClock />
            </div>
-           <button className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-xl transition-all">
-             <RefreshCw className="w-4 h-4 text-slate-400" />
-           </button>
+           {isAdmin && (
+             <button 
+               onClick={refreshDashboardAggregation}
+               className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-xl transition-all group"
+               title={lang === 'id' ? "Perbarui Statistik" : "Refresh Statistics"}
+             >
+               <RefreshCw className="w-4 h-4 text-slate-400 group-hover:text-accent-purple group-active:rotate-180 transition-all duration-500" />
+             </button>
+           )}
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 px-4">
         {[
-          { label: lang === 'id' ? 'Total Aset' : 'Total Assets', value: stats.totalAssets, icon: Archive, color: 'text-accent-purple', bg: 'bg-accent-purple/10' },
-          { label: lang === 'id' ? 'Laporan Pending' : 'Pending Reports', value: stats.pending.length, icon: AlertCircle, color: 'text-amber-500', bg: 'bg-amber-500/10' },
-          { label: lang === 'id' ? 'Terselesaikan' : 'Resolved', value: stats.resolved.length, icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-          { label: lang === 'id' ? 'Penyelesaian' : 'Completion', value: `${stats.completionRate}%`, icon: TrendingUp, color: 'text-accent-pink', bg: 'bg-accent-pink/10' }
+          { label: lang === 'id' ? 'Total Aset' : 'Total Assets', value: displayStats.totalAssets, icon: Archive, color: 'text-accent-purple', bg: 'bg-accent-purple/10' },
+          { label: lang === 'id' ? 'Laporan Pending' : 'Pending Reports', value: displayStats.pendingReports, icon: AlertCircle, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+          { label: lang === 'id' ? 'Terselesaikan' : 'Resolved', value: displayStats.resolvedReports, icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+          { label: lang === 'id' ? 'Penyelesaian' : 'Completion', value: `${displayStats.completionRate}%`, icon: TrendingUp, color: 'text-accent-pink', bg: 'bg-accent-pink/10' }
         ].map((item, i) => (
           <div key={`dashboard-stat-${i}`} className="bg-white dark:bg-dark-card p-6 rounded-[32px] border border-slate-100 dark:border-white/5 shadow-sm hover:shadow-xl transition-all group overflow-hidden relative">
             <div className={`absolute -right-4 -bottom-4 w-24 h-24 ${item.bg} rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap overflow-hidden`} />
@@ -2634,7 +2955,7 @@ const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang }: an
           </div>
           <div className="flex-1 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dashboardStats.outletData} layout="vertical" margin={{ left: 40, right: 40 }}>
+              <BarChart data={displayStats.outletData} layout="vertical" margin={{ left: 40, right: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} strokeOpacity={0.1} />
                 <XAxis type="number" hide />
                 <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 800, fill: '#64748b' }} width={80} />
@@ -2966,7 +3287,7 @@ const InputAssetView = React.memo(({ t, lang, assetForm, setAssetForm, categoryP
   );
 });
 
-const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, setSearchQuery, searchField, setSearchField, sortOrder, setSortOrder, setShowExportModal, setExportMode, setAssetHistoryId, handleDeleteAsset, setEditingAssetId, setEditAssetForm, currentUser, calculateAge, isAdmin, setPreviewPhoto }: any) => {
+const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, setSearchQuery, searchField, setSearchField, sortOrder, setSortOrder, setShowExportModal, setExportMode, setAssetHistoryId, handleDeleteAsset, setEditingAssetId, setEditAssetForm, currentUser, calculateAge, isAdmin, setPreviewPhoto, hasMoreAssets, assetsLoading, loadMoreAssets }: any) => {
   return (
     <div className="bg-white dark:bg-dark-card p-10 rounded-[40px] shadow-2xl shadow-slate-300/50 dark:shadow-none border border-slate-200 dark:border-white/5 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10">
@@ -3161,6 +3482,23 @@ const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, set
           </div>
         )}
       </div>
+
+      {hasMoreAssets && (
+        <div className="mt-12 flex justify-center">
+          <button 
+            onClick={loadMoreAssets}
+            disabled={assetsLoading}
+            className="px-10 py-5 bg-dashboard-bg dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-800 dark:text-white rounded-[32px] text-xs font-black uppercase tracking-widest tracking-[0.2em] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 border border-slate-200 dark:border-white/5"
+          >
+            {assetsLoading ? (
+              <RefreshCw className="w-4 h-4 animate-spin text-accent-brown" />
+            ) : (
+              <Plus className="w-4 h-4" />
+            )}
+            {lang === 'id' ? 'Muat Lebih Banyak' : 'Load More'}
+          </button>
+        </div>
+      )}
     </div>
   );
 });
@@ -3224,7 +3562,8 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
                     setEmergencyForm({
                       ...emergencyForm,
                       name: asset.name,
-                      code: asset.code
+                      code: asset.code,
+                      category: asset.category || ''
                     });
                   }
                 }} 
@@ -3261,19 +3600,29 @@ const EmergencyView = React.memo(({ t, lang, inventory, emergencyForm, setEmerge
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{t.issue}</label>
               <select value={emergencyForm.issue || ''} onChange={e => setEmergencyForm({...emergencyForm, issue: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-red-400 dark:text-white transition-all appearance-none cursor-pointer" required>
                 <option value="" className="text-slate-400">{t.issuePlc}</option>
-                <option value="Kerusakan Total" className="dark:bg-dark-card dark:text-white">{lang === 'id' ? 'Kerusakan Total' : 'Total Damage'}</option>
-                <option value="Kerusakan Sebagian" className="dark:bg-dark-card dark:text-white">{lang === 'id' ? 'Kerusakan Sebagian' : 'Partial Damage'}</option>
-                <option value="Perlu Perawatan" className="dark:bg-dark-card dark:text-white">{lang === 'id' ? 'Perlu Perawatan' : 'Maintenance Needed'}</option>
+                <option value="Kerusakan Total (fisik pecah, terbakar habis, hancur)" className="dark:bg-dark-card dark:text-white">
+                  {lang === 'id' ? 'Kerusakan Total (fisik pecah, terbakar habis, hancur)' : 'Total Damage (broken, burnt, destroyed)'}
+                </option>
+                <option value="Kerusakan Sebagian (fungsi mati, bocor, patah)" className="dark:bg-dark-card dark:text-white">
+                  {lang === 'id' ? 'Kerusakan Sebagian (fungsi mati, bocor, patah)' : 'Partial Damage (dead function, leaking, snapped)'}
+                </option>
+                <option value="Perlu Perawatan (tidak ada kerusakan namun ada penurunan fungsi)" className="dark:bg-dark-card dark:text-white">
+                  {lang === 'id' ? 'Perlu Perawatan (tidak ada kerusakan namun ada penurunan fungsi)' : 'Maintenance Needed (no damage, but performance drop)'}
+                </option>
               </select>
             </div>
 
-            {/* Kategori Kerusakan */}
+            {/* Kategori Kerusakan (Automatic) */}
             <div className="space-y-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">{lang === 'id' ? 'Kategori Kerusakan' : 'Issue Category'}</label>
-              <select value={emergencyForm.category || ''} onChange={e => setEmergencyForm({...emergencyForm, category: e.target.value})} className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold focus:ring-2 focus:ring-red-400 dark:text-white transition-all appearance-none cursor-pointer" required>
-                <option key="emer-cat-placeholder" value="" className="text-slate-400">{lang === 'id' ? 'Pilih Kategori' : 'Select Category'}</option>
-                {vendorCategories.map((cat: any) => <option key={cat.id} value={cat.name} className="dark:bg-dark-card dark:text-white">{cat.name}</option>)}
-              </select>
+              <input 
+                type="text" 
+                value={emergencyForm.category || ''} 
+                readOnly
+                className="w-full px-6 py-4 bg-slate-50 dark:bg-white/5 border-none rounded-2xl outline-none text-sm font-semibold text-slate-400 dark:text-slate-500 cursor-not-allowed" 
+                placeholder={lang === 'id' ? 'Terisi otomatis' : 'Auto-filled'}
+                required
+              />
             </div>
 
             {/* Prioritas Penanganan */}
@@ -3476,7 +3825,7 @@ const HandlingView = React.memo(({ t, lang, reports, setSolvingReportId, vendors
   );
 });
 
-const CategoryManagementView = React.memo(({ t, lang, categoryOutlets, categoryPlacements, categoryVendors, categoryOwnerships, categoryPriorities, handleCategorySubmit, handleDeleteCategory }: any) => {
+const CategoryManagementView = React.memo(({ t, lang, categoryOutlets, categoryPlacements, categoryVendors, categoryOwnerships, categoryPriorities, categoryGuides, handleCategorySubmit, handleDeleteCategory }: any) => {
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center gap-4">
@@ -3498,13 +3847,13 @@ const CategoryManagementView = React.memo(({ t, lang, categoryOutlets, categoryP
              <button type="submit" className="px-6 py-4 bg-gradient-primary text-white rounded-2xl font-extrabold text-[10px] uppercase shadow-lg shadow-accent-purple/20 transition-all hover:scale-105 active:scale-95"><PlusSquare className="w-4 h-4" /></button>
           </form>
           <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar pt-2">
-            {categoryOutlets.map((cat: any) => (
+            {(categoryOutlets || []).map((cat: any) => (
               <div key={cat.id} className="flex items-center justify-between p-4 bg-dashboard-bg dark:bg-white/5 rounded-2xl group transition-all hover:bg-white dark:hover:bg-white/10 hover:shadow-sm border border-transparent hover:border-slate-100 dark:hover:border-white/5">
                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{cat.name}</span>
                 <button onClick={() => handleDeleteCategory('outlet', cat.id)} className="p-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 transition-all"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
-            {categoryOutlets.length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
+            {(categoryOutlets || []).length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
           </div>
         </div>
 
@@ -3516,13 +3865,13 @@ const CategoryManagementView = React.memo(({ t, lang, categoryOutlets, categoryP
              <button type="submit" className="px-6 py-4 bg-gradient-primary text-white rounded-2xl font-extrabold text-[10px] uppercase shadow-lg shadow-accent-purple/20 transition-all hover:scale-105 active:scale-95"><PlusSquare className="w-4 h-4" /></button>
           </form>
           <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar pt-2">
-            {categoryPlacements.map((cat: any) => (
+            {(categoryPlacements || []).map((cat: any) => (
               <div key={cat.id} className="flex items-center justify-between p-4 bg-dashboard-bg dark:bg-white/5 rounded-2xl group transition-all hover:bg-white dark:hover:bg-white/10 hover:shadow-sm border border-transparent hover:border-slate-100 dark:hover:border-white/5">
                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{cat.name}</span>
                 <button onClick={() => handleDeleteCategory('placement', cat.id)} className="p-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 transition-all"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
-            {categoryPlacements.length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
+            {(categoryPlacements || []).length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
           </div>
         </div>
 
@@ -3534,13 +3883,13 @@ const CategoryManagementView = React.memo(({ t, lang, categoryOutlets, categoryP
              <button type="submit" className="px-6 py-4 bg-gradient-primary text-white rounded-2xl font-extrabold text-[10px] uppercase shadow-lg shadow-accent-purple/20 transition-all hover:scale-105 active:scale-95"><PlusSquare className="w-4 h-4" /></button>
           </form>
           <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar pt-2">
-            {categoryOwnerships.map((cat: any) => (
+            {(categoryOwnerships || []).map((cat: any) => (
               <div key={cat.id} className="flex items-center justify-between p-4 bg-dashboard-bg dark:bg-white/5 rounded-2xl group transition-all hover:bg-white dark:hover:bg-white/10 hover:shadow-sm border border-transparent hover:border-slate-100 dark:hover:border-white/5">
                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{cat.name}</span>
                 <button onClick={() => handleDeleteCategory('ownership', cat.id)} className="p-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 transition-all"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
-            {categoryOwnerships.length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
+            {(categoryOwnerships || []).length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
           </div>
         </div>
 
@@ -3552,19 +3901,19 @@ const CategoryManagementView = React.memo(({ t, lang, categoryOutlets, categoryP
              <button type="submit" className="px-6 py-4 bg-gradient-primary text-white rounded-2xl font-extrabold text-[10px] uppercase shadow-lg shadow-accent-purple/20 transition-all hover:scale-105 active:scale-95"><PlusSquare className="w-4 h-4" /></button>
           </form>
           <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar pt-2">
-            {categoryPriorities.map((cat: any) => (
+            {(categoryPriorities || []).map((cat: any) => (
               <div key={cat.id} className="flex items-center justify-between p-4 bg-dashboard-bg dark:bg-white/5 rounded-2xl group transition-all hover:bg-white dark:hover:bg-white/10 hover:shadow-sm border border-transparent hover:border-slate-100 dark:hover:border-white/5">
                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{cat.name}</span>
                 <button onClick={() => handleDeleteCategory('priority', cat.id)} className="p-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 transition-all"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
-            {categoryPriorities.length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
+            {(categoryPriorities || []).length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
           </div>
         </div>
 
         {/* Vendor Categories */}
         <div className="bg-white dark:bg-dark-card p-6 sm:p-10 rounded-[32px] sm:rounded-[40px] shadow-sm border border-slate-100 dark:border-white/5 space-y-6">
-          <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest">Kategori Vendor</h3>
+          <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest font-black uppercase tracking-widest">{lang === 'id' ? 'Kategori Vendor' : 'Vendor Categories'}</h3>
           <form onSubmit={e => { 
             e.preventDefault(); 
             const input = (e.target as any).querySelector('input'); 
@@ -3575,13 +3924,36 @@ const CategoryManagementView = React.memo(({ t, lang, categoryOutlets, categoryP
              <button type="submit" className="px-6 py-4 bg-gradient-primary text-white rounded-2xl font-extrabold text-[10px] uppercase shadow-lg shadow-accent-purple/20 transition-all hover:scale-105 active:scale-95"><PlusSquare className="w-4 h-4" /></button>
           </form>
           <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar pt-2">
-            {categoryVendors.map((cat: any) => (
+            {(categoryVendors || []).map((cat: any) => (
               <div key={cat.id} className="flex items-center justify-between p-4 bg-dashboard-bg dark:bg-white/5 rounded-2xl group transition-all hover:bg-white dark:hover:bg-white/10 hover:shadow-sm border border-transparent hover:border-slate-100 dark:hover:border-white/5">
                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{cat.name}</span>
                 <button onClick={() => handleDeleteCategory('vendor', cat.id)} className="p-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 transition-all"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
-            {categoryVendors.length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
+            {(categoryVendors || []).length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
+          </div>
+        </div>
+
+        {/* Guide Categories */}
+        <div className="bg-white dark:bg-dark-card p-6 sm:p-10 rounded-[32px] sm:rounded-[40px] shadow-sm border border-slate-100 dark:border-white/5 space-y-6">
+          <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest font-black uppercase tracking-widest">{lang === 'id' ? 'Kategori Panduan' : 'Guide Categories'}</h3>
+          <form onSubmit={e => { 
+            e.preventDefault(); 
+            const input = (e.target as any).querySelector('input'); 
+            handleCategorySubmit('guide', input.value); 
+            input.value = ''; 
+          }} className="flex gap-3">
+             <input type="text" className="flex-1 px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-accent-purple dark:text-white transition-all shadow-inner" placeholder={t.catNamePlc} required />
+             <button type="submit" className="px-6 py-4 bg-gradient-primary text-white rounded-2xl font-extrabold text-[10px] uppercase shadow-lg shadow-accent-purple/20 transition-all hover:scale-105 active:scale-95"><PlusSquare className="w-4 h-4" /></button>
+          </form>
+          <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar pt-2">
+            {(categoryGuides || []).map((cat: any) => (
+              <div key={cat.id} className="flex items-center justify-between p-4 bg-dashboard-bg dark:bg-white/5 rounded-2xl group transition-all hover:bg-white dark:hover:bg-white/10 hover:shadow-sm border border-transparent hover:border-slate-100 dark:hover:border-white/5">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">{cat.name}</span>
+                <button onClick={() => handleDeleteCategory('guide', cat.id)} className="p-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 transition-all"><Trash2 className="w-4 h-4" /></button>
+              </div>
+            ))}
+            {(categoryGuides || []).length === 0 && <p className="text-center py-10 text-[10px] text-slate-300 font-bold uppercase tracking-widest">{t.catEmpty}</p>}
           </div>
         </div>
       </div>
@@ -3948,6 +4320,149 @@ const ProcurementView = React.memo(({ lang, procurementForm, setProcurementForm,
               </div>
            </div>
         )}
+      </div>
+    </div>
+  );
+});
+
+const GuideView = React.memo(({ t, lang, guides, categoryGuides, guideForm, setGuideForm, handleGuideSubmit, handleDeleteGuide, editingGuideId, setEditingGuideId, isAdmin }: any) => {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  
+  const categories = Array.from(new Set(guides.map((g: any) => g.category)));
+
+  return (
+    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-blue-100 text-blue-500 rounded-2xl flex items-center justify-center">
+            <BookOpen className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">{t.guides}</h2>
+            <p className="text-xs text-slate-400">{lang === 'id' ? 'Tutorial dan panduan operasional.' : 'Tutorials and operational guides.'}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+        {/* Form (Only for Management/Admin) */}
+        {isAdmin && (
+          <div className="bg-white dark:bg-dark-card p-6 sm:p-10 rounded-[32px] sm:rounded-[40px] shadow-sm border border-slate-100 dark:border-white/5 space-y-8 h-fit lg:sticky lg:top-10">
+            <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest">{editingGuideId ? 'Edit Panduan' : t.addGuide}</h3>
+            <form onSubmit={handleGuideSubmit} className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4">{t.guideTitleLabel}</label>
+                <input 
+                  type="text" 
+                  value={guideForm.title || ''} 
+                  onChange={e => setGuideForm({...guideForm, title: e.target.value})} 
+                  className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-blue-400 dark:text-white transition-all shadow-inner" 
+                  placeholder={lang === 'id' ? "Contoh: SOP Pembersihan Mesin Espresso" : "Example: Espresso Machine Cleaning SOP"} 
+                  required 
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4">{t.guideCatLabel}</label>
+                <select 
+                  value={guideForm.category || ''} 
+                  onChange={e => setGuideForm({...guideForm, category: e.target.value})} 
+                  className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-blue-400 dark:text-white transition-all appearance-none cursor-pointer" 
+                  required 
+                >
+                  <option value="">{lang === 'id' ? 'Pilih Kategori' : 'Select Category'}</option>
+                  {(categoryGuides || []).map((cat: any) => (
+                    <option key={cat.id} value={cat.name} className="dark:bg-dark-card dark:text-white">
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4">{t.guideContentLabel}</label>
+                <textarea 
+                  value={guideForm.content || ''} 
+                  onChange={e => setGuideForm({...guideForm, content: e.target.value})} 
+                  className="w-full px-6 py-4 bg-dashboard-bg dark:bg-white/5 border-none rounded-2xl outline-none text-xs font-bold focus:ring-2 focus:ring-blue-400 dark:text-white transition-all shadow-inner h-48 resize-none" 
+                  placeholder={lang === 'id' ? "Tuliskan isi panduan di sini..." : "Write the guide content here..."} 
+                  required 
+                />
+              </div>
+              <button 
+                type="submit" 
+                className="w-full py-5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-full font-black text-[10px] uppercase tracking-widest shadow-xl shadow-blue-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+              >
+                {editingGuideId ? 'Update Panduan' : 'Simpan Panduan'}
+              </button>
+              {editingGuideId && (
+                <button 
+                  type="button" 
+                  onClick={() => {setEditingGuideId(null); setGuideForm({title: '', category: '', content: ''});}} 
+                  className="w-full py-4 bg-slate-100 dark:bg-white/5 text-slate-400 rounded-full text-[10px] font-bold uppercase tracking-widest mt-2 transition-all"
+                >
+                  Batal Edit
+                </button>
+              )}
+            </form>
+          </div>
+        )}
+
+        {/* Guides List */}
+        <div className={`${isAdmin ? 'xl:col-span-2' : 'xl:col-span-3'} space-y-8`}>
+          {categories.length === 0 ? (
+            <div className="bg-white dark:bg-dark-card p-20 rounded-[40px] text-center border-2 border-dashed border-slate-100 dark:border-white/5 shadow-sm">
+              <BookOpen className="w-16 h-16 text-slate-200 mx-auto mb-6" />
+              <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Belum ada panduan tersedia</p>
+            </div>
+          ) : (
+            categories.map(cat => (
+              <div key={cat as string} className="space-y-4">
+                <div className="flex items-center gap-4 px-2">
+                  <div className="h-px flex-1 bg-slate-100 dark:bg-white/5" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{cat as string}</span>
+                  <div className="h-px flex-1 bg-slate-100 dark:bg-white/5" />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {guides.filter((g: any) => g.category === cat).map((guide: any) => (
+                    <motion.div 
+                      key={guide.id}
+                      layout
+                      className="bg-white dark:bg-dark-card rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-white/5 group hover:shadow-xl transition-all relative overflow-hidden"
+                    >
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="flex-1">
+                          <h4 className="text-sm font-black text-slate-900 dark:text-white group-hover:text-blue-500 transition-colors leading-tight">{guide.title}</h4>
+                          <p className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Diupdate: {new Date(guide.updatedAt).toLocaleDateString('id-ID')}</p>
+                        </div>
+                        {isAdmin && (
+                          <div className="flex gap-2">
+                            <button onClick={() => {setEditingGuideId(guide.id); setGuideForm({title: guide.title, category: guide.category, content: guide.content});}} className="p-2 text-slate-300 hover:text-blue-400 transition-colors"><Edit className="w-4 h-4" /></button>
+                            <button onClick={() => handleDeleteGuide(guide.id)} className="p-2 text-slate-300 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className={`overflow-hidden transition-all duration-300 ${expandedId === guide.id ? 'max-h-[1000px] mb-4' : 'max-h-0'}`}>
+                        <div className="p-4 bg-slate-50 dark:bg-white/5 rounded-2xl">
+                          <p className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
+                            {guide.content}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={() => setExpandedId(expandedId === guide.id ? null : guide.id)}
+                        className="w-full py-2.5 bg-blue-50 dark:bg-white/5 text-blue-500 dark:text-blue-400 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-blue-100 dark:hover:bg-white/10 transition-colors flex items-center justify-center gap-2"
+                      >
+                        {expandedId === guide.id ? 'Tutup Panduan' : 'Baca Selengkapnya'}
+                        <ArrowDown className={`w-3.5 h-3.5 transition-transform ${expandedId === guide.id ? 'rotate-180' : ''}`} />
+                      </button>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

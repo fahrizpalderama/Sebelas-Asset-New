@@ -156,6 +156,28 @@
         "reportId": { "type": "string" }
       },
       "required": ["assetCode", "type", "description", "user", "timestamp"]
+    },
+    "Guide": {
+      "title": "Guide",
+      "description": "Tutorials and work guides",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "content": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["title", "category", "content", "createdBy", "timestamp"]
+    },
+    "GuideCategory": {
+      "title": "Guide Category",
+      "description": "Categories for tutorials",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
     }
   },
   "firestore": {
@@ -206,6 +228,14 @@
     "/asset_activities/{activityId}": {
       "schema": "AssetActivity",
       "description": "Log of activities"
+    },
+    "/guides/{guideId}": {
+      "schema": "Guide",
+      "description": "Tutorials and guides"
+    },
+    "/category_guides/{catId}": {
+      "schema": "GuideCategory",
+      "description": "Categories for tutorials"
     }
   }
 }

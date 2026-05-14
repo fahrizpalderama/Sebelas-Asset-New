@@ -25,6 +25,7 @@ export interface Asset {
   ownership?: string;
   priority?: string;
   status?: "Normal" | "Emergency" | "Maintenance";
+  createdAt?: string;
 }
 
 export interface Vendor {
