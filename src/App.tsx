@@ -720,51 +720,48 @@ export default function App() {
       }
     };
     fetchAssetRefs();
+  }, [currentUser, isSimulationMode]);
 
-    let qAssetsConstraints: any[] = [orderBy('name'), limit(100)]; // Increased limit for search
+  // Assets Listener (with Search support)
+  useEffect(() => {
+    if (!currentUser || isSimulationMode) {
+      setInventory([]);
+      return;
+    }
+
+    let qAssetsConstraints: any[] = [orderBy('name'), limit(100)];
     if (debouncedSearchQuery && searchField === 'all') {
       qAssetsConstraints = [search(debouncedSearchQuery), limit(100)];
     } else if (debouncedSearchQuery) {
-      // If specific field is selected, use where instead of comprehensive search
       qAssetsConstraints = [where(searchField, '==', debouncedSearchQuery), limit(100)];
     }
 
     const qAssets = query(collection(db, 'assets'), ...qAssetsConstraints);
-    let unsubscribeAssets = () => {};
-    let unsubscribeStats = () => {};
+    const unsubscribeAssets = onSnapshot(qAssets, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Asset));
+      setInventory(items);
+      setLastVisibleAsset(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMoreAssets(snapshot.docs.length === 100);
+      setIsOffline(false);
+    }, (error) => {
+      handleFirestoreError(error, 'LIST_ASSETS', 'assets');
+    });
 
-    if (isSimulationMode) {
-      setInventory(MOCK_ASSETS);
-      setAllAssetRefs(MOCK_ASSETS.map(d => ({
-        id: d.id,
-        name: d.name,
-        code: d.code,
-        outlet: d.outlet,
-        placement: d.placement,
-        category: d.category
-      })));
-      setSummaryStats(MOCK_STATS_SUMMARY);
-      setReports(MOCK_REPORTS);
-      setHasMoreAssets(false);
-    } else {
-      unsubscribeStats = onSnapshot(qStats, (snapshot) => {
-        if (snapshot.exists()) {
-          setSummaryStats(snapshot.data());
-        }
-      }, (error) => {
-        console.error("Stats Listener Error:", error);
-      });
+    return () => unsubscribeAssets();
+  }, [currentUser, isSimulationMode, debouncedSearchQuery, searchField]);
 
-      unsubscribeAssets = onSnapshot(qAssets, (snapshot) => {
-        const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Asset));
-        setInventory(items);
-        setLastVisibleAsset(snapshot.docs[snapshot.docs.length - 1]);
-        setHasMoreAssets(snapshot.docs.length === 100);
-        setIsOffline(false);
-      }, (error) => {
-        handleFirestoreError(error, 'LIST_ASSETS', 'assets');
-      });
-    }
+  // Static/Reference Data Listeners
+  useEffect(() => {
+    if (!currentUser || isSimulationMode) return;
+
+    const qStats = doc(db, 'stats', 'dashboard');
+    const unsubscribeStats = onSnapshot(qStats, (snapshot) => {
+      if (snapshot.exists()) {
+        setSummaryStats(snapshot.data());
+      }
+    }, (error) => {
+      console.error("Stats Listener Error:", error);
+    });
 
     const qReports = query(collection(db, 'reports'), orderBy('timestamp', 'desc'), limit(100));
     const unsubscribeReports = onSnapshot(qReports, (snapshot) => {
@@ -871,7 +868,6 @@ export default function App() {
     });
 
     return () => {
-      unsubscribeAssets();
       unsubscribeStats();
       unsubscribeReports();
       unsubscribeUsers();
@@ -887,7 +883,7 @@ export default function App() {
       unsubscribeProcurements();
       unsubscribeGuides();
     };
-  }, [currentUser, isSimulationMode, debouncedSearchQuery, searchField]);
+  }, [currentUser, isSimulationMode, isAdmin]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDarkMode);

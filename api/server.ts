@@ -8,9 +8,17 @@ import { MongoClient, ServerApiVersion } from 'mongodb';
 // MongoDB Client Logic Inlined for Vercel Compatibility
 const uri = process.env.MONGODB_URI;
 let mongoClient: MongoClient | null = null;
+let cachedDb: any = null;
 
 if (uri) {
   mongoClient = new MongoClient(uri, {
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 30000,
+    socketTimeoutMS: 90000,
+    maxPoolSize: 100,
+    minPoolSize: 10,
+    maxIdleTimeMS: 60000,
+    heartbeatFrequencyMS: 10000,
     serverApi: {
       version: ServerApiVersion.v1,
       strict: true,
@@ -19,15 +27,75 @@ if (uri) {
   });
 }
 
-async function connectDB() {
+let connectionPromise: Promise<any> | null = null;
+
+let lastDbError: string | null = null;
+
+const getDb = async () => {
   if (!mongoClient) return null;
-  try {
-    await mongoClient.connect();
-    console.log("Successfully connected to MongoDB!");
-    return mongoClient;
-  } catch (error) {
-    console.error("MongoDB connection error:", error);
-    return null;
+  
+  if (cachedDb) return cachedDb;
+  
+  if (!connectionPromise) {
+    connectionPromise = mongoClient.connect()
+      .then(() => {
+        console.log("MongoDB connected successfully");
+        cachedDb = mongoClient.db("aset_app");
+        lastDbError = null;
+        return cachedDb;
+      })
+      .catch(e => {
+        console.error("Database connection failure:", e);
+        lastDbError = e.message;
+        connectionPromise = null;
+        cachedDb = null;
+        return null;
+      });
+  }
+  
+  return connectionPromise;
+};
+
+/**
+ * Executes a DB operation with automatic retries for transient errors
+ */
+async function withDb(req: any, res: any, operation: (db: any) => Promise<any>) {
+  let lastError: any;
+  for (let i = 0; i < 3; i++) {
+    const db = await getDb();
+    if (!db) {
+      lastError = new Error("Could not establish database connection");
+      await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)));
+      continue;
+    }
+    
+    try {
+      return await operation(db);
+    } catch (error: any) {
+      lastError = error;
+      const errorMessage = error.message.toLowerCase();
+      const isTransient = 
+        errorMessage.includes("timeout") || 
+        errorMessage.includes("interrupted") || 
+        errorMessage.includes("topology") ||
+        errorMessage.includes("not connected") ||
+        errorMessage.includes("closed");
+
+      if (isTransient) {
+        console.warn(`Transient DB error: ${error.message}. Retrying (${i + 1}/3)...`);
+        cachedDb = null; // Invalidate cache to force reconnect if necessary
+        connectionPromise = null; // Force a new connection attempt
+        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        continue;
+      }
+      // Non-transient error, throw immediately
+      throw error;
+    }
+  }
+  
+  if (lastError) {
+    console.error("DB Operation failed after retries:", lastError);
+    res.status(500).json({ error: lastError.message || "Database operation failed after multiple attempts" });
   }
 }
 
@@ -65,12 +133,38 @@ try {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Request logging (MUST be before routes)
+app.use((req, res, next) => {
+  const start = Date.now();
+  if (req.originalUrl.startsWith("/api/")) {
+    console.log(`${new Date().toISOString()} - [API START] ${req.method} ${req.originalUrl}`);
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      console.log(`${new Date().toISOString()} - [API END] ${req.method} ${req.originalUrl} ${res.statusCode} (${duration}ms)`);
+    });
+  }
+  next();
+});
+
+// Set request timeout (to avoid hanging connections)
+app.use((req, res, next) => {
+  res.setTimeout(120000, () => {
+    console.error(`Request timeout: ${req.method} ${req.url}`);
+    if (!res.headersSent) {
+      res.status(504).json({ error: "Gateway Timeout", message: "Server took too long to respond" });
+    }
+  });
+  next();
+});
+
 // Health Check for Debugging
 app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
-    mongodb: !!mongoClient, 
+    mongodb_client: !!mongoClient, 
     firebase: !!firebaseApp,
+    db_connected: !!cachedDb,
+    last_db_error: lastDbError,
     vercel: !!process.env.VERCEL,
     env: process.env.NODE_ENV,
     time: new Date().toISOString(),
@@ -78,29 +172,16 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Global error handler
-app.use((err: any, req: any, res: any, next: any) => {
-  console.error("CRITICAL SERVER ERROR:", err);
-  res.status(500).json({ 
-    error: "Internal Server Error", 
-    message: err.message,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-  });
-});
-
-
-// Request logging
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+// Request logging (for debugging fall-through)
+app.use("/api/*", (req, res, next) => {
+  // If we reached here, it means no specific API route matched
   next();
 });
 
 // Migration Endpoint
 app.post("/api/migrate-to-mongodb", async (req, res) => {
-  if (!mongoClient) return res.status(500).json({ error: "MongoDB not connected" });
-  const { collectionName, documents } = req.body;
-  try {
-    const db = mongoClient.db("aset_app");
+  await withDb(req, res, async (db) => {
+    const { collectionName, documents } = req.body;
     const docsToInsert = documents.map((doc: any) => ({
       ...doc,
       _id: doc.id || doc._id,
@@ -114,16 +195,12 @@ app.post("/api/migrate-to-mongodb", async (req, res) => {
     } else {
       res.json({ count: 0 });
     }
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+  });
 });
 
 // MongoDB Generic API
 app.get("/api/mongodb/:collection", async (req, res) => {
-  if (!mongoClient) return res.status(500).json({ error: "MongoDB not connected" });
-  try {
-    const db = mongoClient.db("aset_app");
+  await withDb(req, res, async (db) => {
     const { orderBy, orderDir, limit, where, search } = req.query;
     
     let filter: any = {};
@@ -178,39 +255,27 @@ app.get("/api/mongodb/:collection", async (req, res) => {
     }
     const docs = await queryBuilder.toArray();
     res.json(docs);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+  });
 });
 
 app.get("/api/mongodb/:collection/:id", async (req, res) => {
-  if (!mongoClient) return res.status(500).json({ error: "MongoDB not connected" });
-  try {
-    const db = mongoClient.db("aset_app");
+  await withDb(req, res, async (db) => {
     const doc = await db.collection(req.params.collection).findOne({ _id: req.params.id as any });
     res.json(doc);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+  });
 });
 
 app.post("/api/mongodb/:collection", async (req, res) => {
-  if (!mongoClient) return res.status(500).json({ error: "MongoDB not connected" });
-  try {
-    const db = mongoClient.db("aset_app");
+  await withDb(req, res, async (db) => {
     const data = req.body;
     if (data.id && !data._id) data._id = data.id;
     const result = await db.collection(req.params.collection).insertOne(data);
     res.json({ id: result.insertedId, ...data });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+  });
 });
 
 app.put("/api/mongodb/:collection/:id", async (req, res) => {
-  if (!mongoClient) return res.status(500).json({ error: "MongoDB not connected" });
-  try {
-    const db = mongoClient.db("aset_app");
+  await withDb(req, res, async (db) => {
     const updateData = { ...req.body };
     delete updateData._id;
     delete updateData.id;
@@ -219,20 +284,14 @@ app.put("/api/mongodb/:collection/:id", async (req, res) => {
       { $set: updateData }
     );
     res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+  });
 });
 
 app.delete("/api/mongodb/:collection/:id", async (req, res) => {
-  if (!mongoClient) return res.status(500).json({ error: "MongoDB not connected" });
-  try {
-    const db = mongoClient.db("aset_app");
+  await withDb(req, res, async (db) => {
     await db.collection(req.params.collection).deleteOne({ _id: req.params.id as any });
     res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+  });
 });
 
 // Fonnte WhatsApp
@@ -256,12 +315,17 @@ app.post("/api/whatsapp", async (req, res) => {
 });
 
 async function startServer() {
-  // MongoDB connection
-  if (process.env.MONGODB_URI) {
-    connectDB().catch(err => {
-      console.error("MongoDB background connection failed:", err);
-    });
+  // Initial MongoDB connection attempt
+  const db = await getDb();
+  if (db) {
+    console.log("MongoDB connection established on startup");
   }
+
+  // API 404 handler - Catch unhandled API requests before Vite/Static
+  app.use("/api/:path*", (req: any, res: any) => {
+    console.warn(`API Not Found: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({ error: "API route not found", path: req.params.path });
+  });
 
   // Vite middleware for development
   let viteMiddleware: any = null;
@@ -298,17 +362,30 @@ async function startServer() {
     }
   }
 
-  // API 404 handler
-  app.use("/api/*", (req, res) => {
-    res.status(404).json({ error: "API route not found" });
-  });
-
   // Only listen if not on Vercel
   if (!process.env.VERCEL) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on port ${PORT}`);
     });
   }
+
+  // Global error handler - MUST be at the very bottom
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error("CRITICAL SERVER ERROR:", err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    const status = err.status || 500;
+    if (req.path.startsWith("/api/")) {
+      res.status(status).json({ 
+        error: "Internal Server Error", 
+        message: err.message,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      });
+    } else {
+      next(err);
+    }
+  });
 }
 
 startServer().catch(console.error);

@@ -70,8 +70,8 @@ export const onSnapshot = (colRef: any, callback: (snapshot: any) => void, onErr
     } catch (err) {
       if (onError) onError(err);
     }
-    // High frequency for "real-time" feel, but maybe 3s is safer for performance
-    if (active) setTimeout(poll, 3000);
+    // Increased interval to 5 seconds to reduce server load and avoid timeouts
+    if (active) setTimeout(poll, 5000);
   };
   poll();
   return () => { active = false; };
