@@ -3,7 +3,33 @@ import path from "path";
 import admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
 import fs from "fs";
-import { connectDB, client as mongoClient } from "./src/lib/mongodb";
+import { MongoClient, ServerApiVersion } from 'mongodb';
+
+// MongoDB Client Logic Inlined for Vercel Compatibility
+const uri = process.env.MONGODB_URI;
+let mongoClient: MongoClient | null = null;
+
+if (uri) {
+  mongoClient = new MongoClient(uri, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true,
+    }
+  });
+}
+
+async function connectDB() {
+  if (!mongoClient) return null;
+  try {
+    await mongoClient.connect();
+    console.log("Successfully connected to MongoDB!");
+    return mongoClient;
+  } catch (error) {
+    console.error("MongoDB connection error:", error);
+    return null;
+  }
+}
 
 // Load firebase config manually to be safe with CJS/ESM bundling
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
@@ -219,15 +245,20 @@ async function setupApp() {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!process.env.VERCEL) {
+    // Standard local production server
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
   }
+  // On Vercel, we don't serve static files through Express.
+  // Vercel handles static routing via vercel.json rewrites.
 
-  // Only listen if not running on Vercel
+  // Only listen if not running on Vercel (Production Serverless Environment)
   if (!process.env.VERCEL) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
