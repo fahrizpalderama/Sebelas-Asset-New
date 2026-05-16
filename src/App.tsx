@@ -77,11 +77,12 @@ import {
   Clock,
   Menu,
   Table2,
-  BookOpen
+  BookOpen,
+  Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Asset, Report, User as UserType, UserRole, Vendor, AssetActivity, ProcurementRecord } from './types';
-import { auth, db, googleProvider } from './lib/firebase';
+import { auth, googleProvider } from './lib/firebase';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
@@ -106,7 +107,10 @@ import {
   where,
   limit,
   getDocFromServer
-} from 'firebase/firestore';
+} from './lib/firestoreCompatibility';
+
+const db = null;
+import { MOCK_ASSETS, MOCK_REPORTS, MOCK_STATS_SUMMARY } from './mockData';
 
 const DigitalClock = React.memo(() => {
   const [time, setTime] = useState(new Date());
@@ -472,6 +476,8 @@ export default function App() {
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [summaryStats, setSummaryStats] = useState<any>(null);
   const [allAssetRefs, setAllAssetRefs] = useState<any[]>([]);
+  const [isSimulationMode, setIsSimulationMode] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
 
   // Firestore Error Handler
   const handleFirestoreError = (error: any, operationType: string, path: string | null) => {
@@ -664,16 +670,20 @@ export default function App() {
 
     // Fetch Summary Stats
     const qStats = doc(db, 'settings', 'statistics');
-    const unsubscribeStats = onSnapshot(qStats, (snapshot) => {
-      if (snapshot.exists()) {
-        setSummaryStats(snapshot.data());
-      }
-    }, (error) => {
-      console.error("Stats Listener Error:", error);
-    });
 
     // Fetch minimal asset info once for dropdowns (Emergency View)
     const fetchAssetRefs = async () => {
+      if (isSimulationMode) {
+        setAllAssetRefs(MOCK_ASSETS.map(d => ({
+          id: d.id,
+          name: d.name,
+          code: d.code,
+          outlet: d.outlet,
+          placement: d.placement,
+          category: d.category
+        })));
+        return;
+      }
       try {
         const snap = await getDocs(collection(db, 'assets'));
         setAllAssetRefs(snap.docs.map(d => ({
@@ -691,15 +701,41 @@ export default function App() {
     fetchAssetRefs();
 
     const qAssets = query(collection(db, 'assets'), orderBy('name'), limit(50));
-    const unsubscribeAssets = onSnapshot(qAssets, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Asset));
-      setInventory(items);
-      setLastVisibleAsset(snapshot.docs[snapshot.docs.length - 1]);
-      setHasMoreAssets(snapshot.docs.length === 50);
-      setIsOffline(false);
-    }, (error) => {
-      handleFirestoreError(error, 'LIST_ASSETS', 'assets');
-    });
+    let unsubscribeAssets = () => {};
+    let unsubscribeStats = () => {};
+
+    if (isSimulationMode) {
+      setInventory(MOCK_ASSETS);
+      setAllAssetRefs(MOCK_ASSETS.map(d => ({
+        id: d.id,
+        name: d.name,
+        code: d.code,
+        outlet: d.outlet,
+        placement: d.placement,
+        category: d.category
+      })));
+      setSummaryStats(MOCK_STATS_SUMMARY);
+      setReports(MOCK_REPORTS);
+      setHasMoreAssets(false);
+    } else {
+      unsubscribeStats = onSnapshot(qStats, (snapshot) => {
+        if (snapshot.exists()) {
+          setSummaryStats(snapshot.data());
+        }
+      }, (error) => {
+        console.error("Stats Listener Error:", error);
+      });
+
+      unsubscribeAssets = onSnapshot(qAssets, (snapshot) => {
+        const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Asset));
+        setInventory(items);
+        setLastVisibleAsset(snapshot.docs[snapshot.docs.length - 1]);
+        setHasMoreAssets(snapshot.docs.length === 50);
+        setIsOffline(false);
+      }, (error) => {
+        handleFirestoreError(error, 'LIST_ASSETS', 'assets');
+      });
+    }
 
     const qReports = query(collection(db, 'reports'), orderBy('timestamp', 'desc'), limit(100));
     const unsubscribeReports = onSnapshot(qReports, (snapshot) => {
@@ -822,7 +858,7 @@ export default function App() {
       unsubscribeProcurements();
       unsubscribeGuides();
     };
-  }, [currentUser]);
+  }, [currentUser, isSimulationMode]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDarkMode);
@@ -1025,6 +1061,20 @@ export default function App() {
   };
 
   const logActivity = async (assetCode: string, type: "Created" | "Emergency" | "Resolved" | "Edited", description: string, reportId?: string, photo?: string) => {
+    if (isSimulationMode) {
+      const newActivity: AssetActivity = {
+        id: 'mock-act-' + Date.now(),
+        assetCode,
+        type,
+        description,
+        timestamp: new Date().toISOString(),
+        user: currentUser?.name || 'Simulator',
+        photo,
+        reportId
+      };
+      setAssetActivities(prev => [newActivity, ...prev]);
+      return;
+    }
     try {
       await addDoc(collection(db, 'asset_activities'), {
         assetCode,
@@ -1118,6 +1168,12 @@ export default function App() {
       return;
     }
     openConfirm(t.inventory, t.assetDeleteConfirm, async () => {
+      if (isSimulationMode) {
+        setInventory(prev => prev.filter(i => i.id !== id));
+        setAllAssetRefs(prev => prev.filter(i => i.id !== id));
+        showToast("Aset Berhasil Dihapus (Simulasi)!");
+        return;
+      }
       try {
         // Find asset to get its code for cascading delete
         const asset = inventory.find(i => i.id === id);
@@ -1355,26 +1411,45 @@ export default function App() {
     e.preventDefault();
     if (!assetForm.photo) return showToast("Foto diperlukan!", true);
     
-    try {
-      const newAsset: Omit<Asset, 'id'> = {
-        name: assetForm.name || '',
-        code: assetForm.code || '',
-        condition: (assetForm.condition as any) || 'Baru',
-        placement: assetForm.placement || '',
-        outlet: assetForm.outlet || '',
-        date: assetForm.date || '',
-        verifier: assetForm.verifier || '',
-        photo: assetForm.photo || '',
-        description: assetForm.description || '',
-        price: Number(assetForm.price) || 0,
-        category: assetForm.category || '',
-        unit: assetForm.unit || 'Pcs',
-        quantity: Number(assetForm.quantity) || 1,
-        ownership: assetForm.ownership || '',
-        priority: assetForm.priority || '',
-        createdAt: new Date().toISOString()
-      };
+    const newAsset: Omit<Asset, 'id'> = {
+      name: assetForm.name || '',
+      code: assetForm.code || '',
+      condition: (assetForm.condition as any) || 'Baru',
+      placement: assetForm.placement || '',
+      outlet: assetForm.outlet || '',
+      date: assetForm.date || '',
+      verifier: assetForm.verifier || '',
+      photo: assetForm.photo || '',
+      description: assetForm.description || '',
+      price: Number(assetForm.price) || 0,
+      category: assetForm.category || '',
+      unit: assetForm.unit || 'Pcs',
+      quantity: Number(assetForm.quantity) || 1,
+      ownership: assetForm.ownership || '',
+      priority: assetForm.priority || '',
+      createdAt: new Date().toISOString()
+    };
 
+    if (isSimulationMode) {
+      const mockId = 'mock-' + Date.now();
+      const assetWithId = { ...newAsset, id: mockId } as Asset;
+      setInventory(prev => [assetWithId, ...prev]);
+      setAllAssetRefs(prev => [{
+        id: mockId,
+        name: assetWithId.name,
+        code: assetWithId.code,
+        outlet: assetWithId.outlet,
+        placement: assetWithId.placement,
+        category: assetWithId.category
+      }, ...prev]);
+      await logActivity(newAsset.code, "Created", "Aset baru ditambahkan ke sistem (Mode Simulasi)", undefined, newAsset.photo);
+      setAssetForm({ condition: 'Baru', unit: 'Pcs', quantity: 1, price: undefined });
+      showToast("Aset Berhasil Disimpan (Simulasi)!");
+      setActiveTab('inventory');
+      return;
+    }
+
+    try {
       await addDoc(collection(db, 'assets'), newAsset);
       
       // Log Activity
@@ -1416,6 +1491,14 @@ export default function App() {
 
       if (!updatedAsset.name || !updatedAsset.code) {
         showToast("Nama dan Kode Aset wajib diisi!", true);
+        return;
+      }
+
+      if (isSimulationMode) {
+        setInventory(prev => prev.map(i => i.id === editingAssetId ? { ...i, ...updatedAsset } : i));
+        await logActivity(updatedAsset.code, "Edited", "Aset diperbarui (Mode Simulasi)");
+        setEditingAssetId(null);
+        showToast("Aset Berhasil Diperbarui (Simulasi)!");
         return;
       }
 
@@ -1466,6 +1549,19 @@ export default function App() {
         priority: emergencyForm.priority || 'Penting',
         status: 'pending'
       };
+
+      if (isSimulationMode) {
+        const mockRepId = 'mock-rep-' + Date.now();
+        setReports(prev => [{ ...report, id: mockRepId }, ...prev]);
+        await logActivity(report.code, "Emergency", `Laporan kerusakan (Simulasi): ${report.issue}`, mockRepId, report.photo);
+        if (asset?.id) {
+          setInventory(prev => prev.map(i => i.id === asset.id ? { ...i, status: 'Emergency' } : i));
+        }
+        setEmergencyForm({});
+        showToast("Laporan Terkirim (Simulasi)!");
+        setActiveTab('handling');
+        return;
+      }
 
       const docRef = await addDoc(collection(db, 'reports'), report);
       
@@ -1530,6 +1626,19 @@ export default function App() {
           resolvedAt: new Date().toISOString()
         }
       };
+
+      if (isSimulationMode) {
+        setReports(prev => prev.map(r => r.id === solvingReportId ? { ...r, ...solveData } : r));
+        await logActivity(item.code, "Resolved", "Perbaikan selesai (Simulasi)", solvingReportId.toString(), solveForm.photo);
+        const asset = inventory.find(i => i.code === item.code);
+        if (asset?.id) {
+          setInventory(prev => prev.map(i => i.id === asset.id ? { ...i, status: 'Normal' } : i));
+        }
+        setSolvingReportId(null);
+        setSolveForm({ verifier: '', desc: '', photo: '' });
+        showToast("Penanganan Selesai (Simulasi)!");
+        return;
+      }
 
       await updateDoc(doc(db, 'reports', solvingReportId.toString()), solveData);
       
@@ -1731,6 +1840,94 @@ export default function App() {
     showToast(lang === 'id' ? "Berhasil ekspor Spreadsheet Detail!" : "Detailed Spreadsheet Exported!");
   };
 
+  const handleMigration = async () => {
+    setConfirmModal({
+      show: true,
+      title: lang === 'id' ? 'Konfirmasi Migrasi Data' : 'Data Migration Confirmation',
+      message: lang === 'id' 
+        ? 'Data dari Firestore akan disalin ke MongoDB Atlas. Proses ini mungkin memakan waktu beberapa menit tergantung jumlah data. Lanjutkan?' 
+        : 'Data from Firestore will be copied to MongoDB Atlas. This process may take a few minutes depending on the data volume. Continue?',
+      confirmText: lang === 'id' ? 'Ya, Migrasi Sekarang' : 'Yes, Migrate Now',
+      onConfirm: async () => {
+        setIsMigrating(true);
+        try {
+          const collections = [
+            "users", "assets", "reports", "category_outlets", 
+            "category_placements", "vendors_service", "vendors_procurement", 
+            "procurements", "category_vendors", "category_ownerships", 
+            "category_priorities", "asset_activities", "guides", "category_guides"
+          ];
+
+          let totalMigrated = 0;
+          let errors: string[] = [];
+
+          for (const colName of collections) {
+            try {
+              const snapshot = await getDocs(collection(db, colName));
+              const docs = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+              }));
+
+              if (docs.length > 0) {
+                // For very large collections, we could chunk here, 
+                // but with 50mb limit it should handle most cases.
+                const response = await fetch('/api/migrate-to-mongodb', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    collectionName: colName,
+                    documents: docs
+                  })
+                });
+
+                const contentType = response.headers.get("content-type");
+                if (contentType && contentType.indexOf("application/json") !== -1) {
+                  const result = await response.json();
+                  if (!response.ok) {
+                    errors.push(`${colName}: ${result.error || 'Server error'}`);
+                  } else {
+                    totalMigrated += result.count || 0;
+                  }
+                } else {
+                  const errorText = await response.text();
+                  errors.push(`${colName}: ${response.status} ${response.statusText} - ${errorText.substring(0, 100)}...`);
+                }
+              }
+              
+              // Small delay between collections to breathe
+              await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (err: any) {
+              errors.push(`${colName}: ${err.message}`);
+            }
+          }
+
+          if (errors.length > 0) {
+            showToast(
+              lang === 'id' 
+                ? `Migrasi selesai dengan ${errors.length} error. Total ${totalMigrated} dokumen dipindahkan.` 
+                : `Migration finished with ${errors.length} errors. Total ${totalMigrated} documents moved.`,
+              true
+            );
+            console.error('Migration errors:', errors);
+          } else {
+            showToast(
+              lang === 'id' 
+                ? `Migrasi Berhasil! Semua data (${totalMigrated} dokumen) telah dipindahkan.` 
+                : `Migration Successful! All data (${totalMigrated} documents) moved.`
+            );
+          }
+        } catch (error) {
+          console.error('Migration overall error:', error);
+          showToast(lang === 'id' ? 'Terjadi kesalahan sistem saat migrasi.' : 'System error during migration.', true);
+        } finally {
+          setIsMigrating(false);
+          setConfirmModal({ show: false, title: '', message: '', confirmText: '', onConfirm: () => {} });
+        }
+      }
+    });
+  };
+
   // Nav Helpers
   const isLocked = (tab: string) => {
     if (!currentUser) return true;
@@ -1770,6 +1967,8 @@ export default function App() {
             isAdmin={isAdmin}
             refreshDashboardAggregation={refreshDashboardAggregation}
             allAssetRefs={allAssetRefs}
+            onMigrate={handleMigration}
+            isMigrating={isMigrating}
           />
         );
       case 'input':
@@ -2042,7 +2241,20 @@ export default function App() {
                   </div>
                 </div>
 
-              <div className="mt-auto p-8 pt-4 border-t border-white/5 space-y-6">
+              <div className="mt-auto p-8 pt-4 border-t border-white/5 space-y-4">
+                <div className="px-6 flex flex-col gap-2">
+                   <button 
+                     onClick={() => setIsSimulationMode(!isSimulationMode)}
+                     className={`w-full flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border transition-all ${isSimulationMode ? 'bg-amber-500/10 border-amber-500/50 text-amber-500 shadow-md shadow-amber-500/20' : 'bg-white/5 border-white/5 text-slate-500 hover:text-amber-500 hover:border-amber-500/30'}`}
+                   >
+                     <div className="flex items-center gap-3">
+                       <RefreshCw className={`w-4 h-4 ${isSimulationMode ? 'animate-spin-slow text-amber-500' : ''}`} />
+                       <span className="text-[10px] font-black uppercase tracking-widest">{lang === 'id' ? 'Simulasi' : 'Simulation'}</span>
+                     </div>
+                     <div className={`w-2 h-2 rounded-full ${isSimulationMode ? 'bg-amber-500 animate-pulse' : 'bg-slate-700'}`} />
+                   </button>
+                </div>
+
                 <div className="flex items-center gap-3 px-6">
                   <div className="w-10 h-10 rounded-2xl overflow-hidden shadow-lg bg-gradient-primary p-0.5 flex-shrink-0">
                     <div className="w-full h-full bg-dark-sidebar rounded-[14px] p-0.5">
@@ -2101,6 +2313,13 @@ export default function App() {
             </div>
 
             <div className="absolute top-8 right-8 flex items-center gap-2">
+              <button 
+                onClick={() => setIsSimulationMode(!isSimulationMode)}
+                className={`w-10 h-10 border rounded-xl flex items-center justify-center transition p-2 ${isSimulationMode ? 'bg-amber-500 border-amber-600 text-white shadow-lg' : 'bg-slate-50 dark:bg-white/5 border-slate-100 dark:border-white/10 text-slate-400 hover:text-amber-500'}`}
+                title={lang === 'id' ? "Mode Simulasi" : "Simulation Mode"}
+              >
+                <RefreshCw className={`w-4 h-4 ${isSimulationMode ? 'animate-spin-slow' : ''}`} />
+              </button>
               <button 
                 onClick={() => setLang(lang === 'id' ? 'en' : 'id')}
                 className="w-10 h-10 bg-slate-50 dark:bg-white/5 border border-slate-100 dark:border-white/10 rounded-xl flex items-center justify-center text-[10px] font-bold text-slate-400 hover:text-accent-purple transition uppercase"
@@ -2846,7 +3065,7 @@ export default function App() {
 }
 
 // Performance Optimized Views
-const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summaryStats, isAdmin, refreshDashboardAggregation, allAssetRefs }: any) => {
+const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summaryStats, isAdmin, refreshDashboardAggregation, allAssetRefs, onMigrate, isMigrating }: any) => {
   const [range, setRange] = useState<'0' | '7' | '15' | '30'>('15');
   
   const currentReportStats = useMemo(() => {
@@ -2911,13 +3130,31 @@ const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summ
               <DigitalClock />
            </div>
            {isAdmin && (
-             <button 
-               onClick={refreshDashboardAggregation}
-               className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-xl transition-all group"
-               title={lang === 'id' ? "Perbarui Statistik" : "Refresh Statistics"}
-             >
-               <RefreshCw className="w-4 h-4 text-slate-400 group-hover:text-accent-purple group-active:rotate-180 transition-all duration-500" />
-             </button>
+             <>
+              <button 
+                onClick={refreshDashboardAggregation}
+                className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-xl transition-all group"
+                title={lang === 'id' ? "Perbarui Statistik" : "Refresh Statistics"}
+              >
+                <RefreshCw className="w-4 h-4 text-slate-400 group-hover:text-accent-purple group-active:rotate-180 transition-all duration-500" />
+              </button>
+              <button 
+                onClick={onMigrate}
+                disabled={isMigrating}
+                className="px-4 py-2 bg-emerald-500/10 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ml-2"
+                title={lang === 'id' ? "Migrasi ke MongoDB" : "Migrate to MongoDB"}
+              >
+                {isMigrating ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Database className="w-3.5 h-3.5" />
+                )}
+                {isMigrating 
+                  ? (lang === 'id' ? 'Memindahkan...' : 'Migrating...') 
+                  : (lang === 'id' ? 'Migrasi MongoDB' : 'MongoDB Migration')
+                }
+              </button>
+             </>
            )}
         </div>
       </div>

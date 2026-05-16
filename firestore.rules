@@ -235,7 +235,7 @@ service cloud.firestore {
     }
 
     match /test-connection/check {
-      allow read: if isSignedIn();
+      allow read: if true;
     }
   }
 }

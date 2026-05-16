@@ -178,9 +178,21 @@
         "name": { "type": "string" }
       },
       "required": ["name"]
+    },
+    "ConnectionStatus": {
+      "title": "Connection Status",
+      "description": "Simple object for connection testing",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string" }
+      }
     }
   },
   "firestore": {
+    "/test-connection/check": {
+      "schema": "ConnectionStatus",
+      "description": "Public path for checking Firestore connectivity on boot"
+    },
     "/users/{userId}": {
       "schema": "User",
       "description": "User profile documents"
