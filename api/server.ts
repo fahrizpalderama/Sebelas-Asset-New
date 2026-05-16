@@ -4,7 +4,6 @@ import admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
 import fs from "fs";
 import { MongoClient, ServerApiVersion } from 'mongodb';
-import { createServer as createViteServer } from "vite";
 
 // MongoDB Client Logic Inlined for Vercel Compatibility
 const uri = process.env.MONGODB_URI;
@@ -32,7 +31,16 @@ async function connectDB() {
   }
 }
 
-import firebaseConfig from "../firebase-applet-config.json" with { type: "json" };
+// Load firebase config manually
+let firebaseConfig: any = {};
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  }
+} catch (e) {
+  console.warn("Failed to load firebase-applet-config.json via fs:", e);
+}
 
 const app = express();
 const PORT = 3000;
@@ -62,9 +70,21 @@ app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
     mongodb: !!mongoClient, 
+    firebase: !!firebaseApp,
     vercel: !!process.env.VERCEL,
     env: process.env.NODE_ENV,
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// Global error handler
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("CRITICAL SERVER ERROR:", err);
+  res.status(500).json({ 
+    error: "Internal Server Error", 
+    message: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
 
@@ -244,22 +264,44 @@ async function startServer() {
   }
 
   // Vite middleware for development
+  let viteMiddleware: any = null;
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else if (!process.env.VERCEL) {
-    // Production static files
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      viteMiddleware = vite.middlewares;
+      app.use(viteMiddleware);
+      console.log("Vite middleware loaded");
+    } catch (e) {
+      console.error("Failed to load Vite middleware:", e);
+      // Fallback: try to serve static files if they exist
+    }
+  } 
+  
+  if (!viteMiddleware && !process.env.VERCEL) {
+    // Production static files or fallback if Vite failed
     const distPath = path.join(process.cwd(), "dist");
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
-      app.get("*", (req, res) => {
+      app.get("*", (req, res, next) => {
+        if (req.path.startsWith("/api/")) return next(); // Don't serve index.html for API
         res.sendFile(path.join(distPath, "index.html"));
+      });
+      console.log("Serving static files from dist");
+    } else {
+      app.get("/", (req, res) => {
+        res.send("<h1>Server is running</h1><p>API is available at /api/health. Application bundle (dist) not found and Vite failed to start.</p>");
       });
     }
   }
+
+  // API 404 handler
+  app.use("/api/*", (req, res) => {
+    res.status(404).json({ error: "API route not found" });
+  });
 
   // Only listen if not on Vercel
   if (!process.env.VERCEL) {

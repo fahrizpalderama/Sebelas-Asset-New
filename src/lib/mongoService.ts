@@ -28,7 +28,14 @@ export const mongoService = {
     const queryString = params.toString();
     if (queryString) url += `?${queryString}`;
 
-    const res = await fetch(url);
+    let res;
+    try {
+      res = await fetch(url);
+    } catch (e: any) {
+      console.error(`Fetch encountered network error for ${url}:`, e);
+      throw new Error(`Connection failed: ${e.message}. The server might be offline or starting up.`);
+    }
+
     const contentType = res.headers.get("content-type");
     if (!res.ok) {
       const errorText = await res.text();
@@ -47,7 +54,14 @@ export const mongoService = {
   },
 
   async get(collection: string, id: string) {
-    const res = await fetch(`/api/mongodb/${collection}/${id}`);
+    const url = `/api/mongodb/${collection}/${id}`;
+    let res;
+    try {
+      res = await fetch(url);
+    } catch (e: any) {
+      console.error(`Fetch GET network error for ${url}:`, e);
+      throw new Error(`Connection failed: ${e.message}`);
+    }
     const contentType = res.headers.get("content-type");
     if (!res.ok) {
       const errorText = await res.text();
@@ -64,11 +78,18 @@ export const mongoService = {
   },
 
   async create(collection: string, data: any) {
-    const res = await fetch(`/api/mongodb/${collection}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
+    const url = `/api/mongodb/${collection}`;
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+    } catch (e: any) {
+      console.error(`Fetch POST network error for ${url}:`, e);
+      throw new Error(`Connection failed: ${e.message}`);
+    }
     const contentType = res.headers.get("content-type");
     if (!res.ok) {
       const errorText = await res.text();
@@ -81,11 +102,18 @@ export const mongoService = {
   },
 
   async update(collection: string, id: string, data: any) {
-    const res = await fetch(`/api/mongodb/${collection}/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
+    const url = `/api/mongodb/${collection}/${id}`;
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+    } catch (e: any) {
+      console.error(`Fetch PUT network error for ${url}:`, e);
+      throw new Error(`Connection failed: ${e.message}`);
+    }
     const contentType = res.headers.get("content-type");
     if (!res.ok) {
       const errorText = await res.text();
@@ -98,9 +126,16 @@ export const mongoService = {
   },
 
   async delete(collection: string, id: string) {
-    const res = await fetch(`/api/mongodb/${collection}/${id}`, {
-      method: "DELETE",
-    });
+    const url = `/api/mongodb/${collection}/${id}`;
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "DELETE",
+      });
+    } catch (e: any) {
+      console.error(`Fetch DELETE network error for ${url}:`, e);
+      throw new Error(`Connection failed: ${e.message}`);
+    }
     const contentType = res.headers.get("content-type");
     if (!res.ok) {
       const errorText = await res.text();
