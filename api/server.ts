@@ -4,6 +4,7 @@ import admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
 import fs from "fs";
 import { MongoClient, ServerApiVersion } from 'mongodb';
+import { createServer as createViteServer } from "vite";
 
 // MongoDB Client Logic Inlined for Vercel Compatibility
 const uri = process.env.MONGODB_URI;
@@ -67,12 +68,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// MongoDB connection
-if (process.env.MONGODB_URI) {
-  connectDB().catch(err => {
-    console.error("MongoDB background connection failed:", err);
-  });
-}
 
 // Request logging
 app.use((req, res, next) => {
@@ -109,8 +104,51 @@ app.get("/api/mongodb/:collection", async (req, res) => {
   if (!mongoClient) return res.status(500).json({ error: "MongoDB not connected" });
   try {
     const db = mongoClient.db("aset_app");
-    const { orderBy, orderDir, limit } = req.query;
-    let queryBuilder = db.collection(req.params.collection).find({});
+    const { orderBy, orderDir, limit, where, search } = req.query;
+    
+    let filter: any = {};
+    if (search) {
+      const searchStr = search as string;
+      const searchRegex = { $regex: searchStr, $options: 'i' };
+      filter.$or = [
+        { name: searchRegex },
+        { code: searchRegex },
+        { outlet: searchRegex },
+        { placement: searchRegex },
+        { category: searchRegex },
+        { description: searchRegex },
+        { verifier: searchRegex },
+        { ownership: searchRegex },
+        { condition: searchRegex },
+        { status: searchRegex }
+      ];
+    }
+
+    if (where) {
+      try {
+        const whereClauses = Array.isArray(where) ? where : [where];
+        whereClauses.forEach((w: any) => {
+          const { field, operator, value } = JSON.parse(w as string);
+          if (operator === '==' || operator === '===') {
+            filter[field] = value;
+          } else if (operator === '>=') {
+            filter[field] = { $gte: value };
+          } else if (operator === '<=') {
+            filter[field] = { $lte: value };
+          } else if (operator === '>') {
+            filter[field] = { $gt: value };
+          } else if (operator === '<') {
+            filter[field] = { $lt: value };
+          } else if (operator === 'array-contains') {
+            filter[field] = { $in: [value] };
+          }
+        });
+      } catch (e) {
+        console.error("Error parsing where filter:", e);
+      }
+    }
+
+    let queryBuilder = db.collection(req.params.collection).find(filter);
     if (orderBy) {
       const dir = orderDir === 'desc' ? -1 : 1;
       queryBuilder = queryBuilder.sort({ [orderBy as string]: dir });
@@ -197,11 +235,40 @@ app.post("/api/whatsapp", async (req, res) => {
   }
 });
 
-// Only listen if not on Vercel
-if (!process.env.VERCEL) {
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+async function startServer() {
+  // MongoDB connection
+  if (process.env.MONGODB_URI) {
+    connectDB().catch(err => {
+      console.error("MongoDB background connection failed:", err);
+    });
+  }
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else if (!process.env.VERCEL) {
+    // Production static files
+    const distPath = path.join(process.cwd(), "dist");
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
+  }
+
+  // Only listen if not on Vercel
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  }
 }
+
+startServer().catch(console.error);
 
 export default app;

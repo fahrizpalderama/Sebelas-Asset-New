@@ -12,6 +12,17 @@ export const mongoService = {
       if (c.type === 'limit') {
         params.append('limit', c.n.toString());
       }
+      if (c.type === 'search') {
+        params.append('search', c.args[0]);
+      }
+      if (c.type === 'where') {
+        // args: [field, operator, value]
+        params.append('where', JSON.stringify({
+          field: c.args[0],
+          operator: c.args[1],
+          value: c.args[2]
+        }));
+      }
     });
 
     const queryString = params.toString();

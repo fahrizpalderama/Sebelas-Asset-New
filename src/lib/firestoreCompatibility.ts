@@ -48,6 +48,7 @@ export const query = (colRef: any, ...constraints: any[]) => [colRef, ...constra
 export const orderBy = (...args: any[]) => ({ type: 'orderBy', args });
 export const limit = (n: number) => ({ type: 'limit', n });
 export const where = (...args: any[]) => ({ type: 'where', args });
+export const search = (query: string) => ({ type: 'search', args: [query] });
 
 export const startAfter = (...args: any[]) => ({ type: 'startAfter', args });
 export const getDocFromServer = getDoc;

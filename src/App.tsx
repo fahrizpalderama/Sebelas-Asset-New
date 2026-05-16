@@ -106,6 +106,7 @@ import {
   getDocs,
   where,
   limit,
+  search,
   getDocFromServer
 } from './lib/firestoreCompatibility';
 
@@ -447,7 +448,8 @@ export default function App() {
   const [vendorForm, setVendorForm] = useState<Partial<Vendor>>({});
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchField, setSearchField] = useState('name');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [searchField, setSearchField] = useState('all');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [assetHistoryId, setAssetHistoryId] = useState<string | null>(null);
   
@@ -671,6 +673,14 @@ export default function App() {
     { name: 'Sun', tasks: 28, spend: 350 },
   ], []);
 
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   // Firestore Listeners
   useEffect(() => {
     if (!currentUser) {
@@ -711,7 +721,15 @@ export default function App() {
     };
     fetchAssetRefs();
 
-    const qAssets = query(collection(db, 'assets'), orderBy('name'), limit(50));
+    let qAssetsConstraints: any[] = [orderBy('name'), limit(100)]; // Increased limit for search
+    if (debouncedSearchQuery && searchField === 'all') {
+      qAssetsConstraints = [search(debouncedSearchQuery), limit(100)];
+    } else if (debouncedSearchQuery) {
+      // If specific field is selected, use where instead of comprehensive search
+      qAssetsConstraints = [where(searchField, '==', debouncedSearchQuery), limit(100)];
+    }
+
+    const qAssets = query(collection(db, 'assets'), ...qAssetsConstraints);
     let unsubscribeAssets = () => {};
     let unsubscribeStats = () => {};
 
@@ -741,7 +759,7 @@ export default function App() {
         const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Asset));
         setInventory(items);
         setLastVisibleAsset(snapshot.docs[snapshot.docs.length - 1]);
-        setHasMoreAssets(snapshot.docs.length === 50);
+        setHasMoreAssets(snapshot.docs.length === 100);
         setIsOffline(false);
       }, (error) => {
         handleFirestoreError(error, 'LIST_ASSETS', 'assets');
@@ -869,7 +887,7 @@ export default function App() {
       unsubscribeProcurements();
       unsubscribeGuides();
     };
-  }, [currentUser, isSimulationMode]);
+  }, [currentUser, isSimulationMode, debouncedSearchQuery, searchField]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDarkMode);
@@ -1317,9 +1335,28 @@ export default function App() {
   // PDF Export
   // Sort and Filter Inventory
   const filteredInventory = useMemo(() => inventory.filter(item => {
-    const query = searchQuery.toLowerCase();
+    const queryStr = searchQuery.toLowerCase().trim();
+    if (!queryStr) return true;
+
+    if (searchField === 'all') {
+      const searchPool = [
+        item.name,
+        item.code,
+        item.category,
+        item.outlet,
+        item.placement,
+        item.verifier,
+        item.description,
+        item.ownership,
+        item.condition,
+        item.status
+      ].map(v => (v || '').toString().toLowerCase());
+      
+      return searchPool.some(v => v.includes(queryStr));
+    }
+
     const val = (item[searchField as keyof Asset] || '').toString().toLowerCase();
-    return val.includes(query);
+    return val.includes(queryStr);
   }).sort((a, b) => {
     const dateA = new Date(a.date).getTime();
     const dateB = new Date(b.date).getTime();
@@ -3586,6 +3623,7 @@ const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, set
           onChange={e => setSearchField(e.target.value)}
           className="px-4 py-3.5 bg-dashboard-bg dark:bg-white/5 rounded-2xl outline-none text-xs font-semibold focus:ring-2 focus:ring-accent-tan transition-all appearance-none cursor-pointer"
         >
+          <option value="all" className="dark:bg-dark-card dark:text-white uppercase font-bold text-[10px] tracking-widest">{lang === 'id' ? 'Semua Field' : 'All Fields'}</option>
           <option value="name" className="dark:bg-dark-card dark:text-white uppercase font-bold text-[10px] tracking-widest">{t.assetName}</option>
           <option value="code" className="dark:bg-dark-card dark:text-white uppercase font-bold text-[10px] tracking-widest">{t.assetCode}</option>
           <option value="verifier" className="dark:bg-dark-card dark:text-white uppercase font-bold text-[10px] tracking-widest">{t.verifier}</option>
