@@ -18,7 +18,16 @@ export const mongoService = {
     if (queryString) url += `?${queryString}`;
 
     const res = await fetch(url);
-    if (!res.ok) throw new Error(await res.text());
+    const contentType = res.headers.get("content-type");
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+    if (!contentType || !contentType.includes("application/json")) {
+      const text = await res.text();
+      console.error("Expected JSON but got:", text.substring(0, 100));
+      throw new Error(`Server returned non-JSON response (likely HTML). Check API routing. Response started with: ${text.substring(0, 50)}...`);
+    }
     const data = await res.json();
     return data.map((item: any) => ({
       ...item,
@@ -28,7 +37,16 @@ export const mongoService = {
 
   async get(collection: string, id: string) {
     const res = await fetch(`/api/mongodb/${collection}/${id}`);
-    if (!res.ok) throw new Error(await res.text());
+    const contentType = res.headers.get("content-type");
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+    if (!contentType || !contentType.includes("application/json")) {
+      const text = await res.text();
+      console.error("Expected JSON but got:", text.substring(0, 100));
+      throw new Error(`Server returned non-JSON response. Response started with: ${text.substring(0, 50)}...`);
+    }
     const data = await res.json();
     if (!data) return null;
     return { ...data, id: data._id || data.id };
@@ -40,7 +58,14 @@ export const mongoService = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error(await res.text());
+    const contentType = res.headers.get("content-type");
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+    if (!contentType || !contentType.includes("application/json")) {
+      throw new Error("Server returned non-JSON response for POST");
+    }
     return await res.json();
   },
 
@@ -50,7 +75,14 @@ export const mongoService = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error(await res.text());
+    const contentType = res.headers.get("content-type");
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+    if (!contentType || !contentType.includes("application/json")) {
+      throw new Error("Server returned non-JSON response for PUT");
+    }
     return await res.json();
   },
 
@@ -58,7 +90,14 @@ export const mongoService = {
     const res = await fetch(`/api/mongodb/${collection}/${id}`, {
       method: "DELETE",
     });
-    if (!res.ok) throw new Error(await res.text());
+    const contentType = res.headers.get("content-type");
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+    if (!contentType || !contentType.includes("application/json")) {
+      throw new Error("Server returned non-JSON response for DELETE");
+    }
     return await res.json();
   }
 };

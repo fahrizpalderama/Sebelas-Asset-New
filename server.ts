@@ -43,8 +43,14 @@ if (process.env.MONGODB_URI) {
     console.error("MongoDB background connection failed:", err);
   });
 } else {
-  console.log("MONGODB_URI not provided, skipping MongoDB connection");
+  console.warn("MONGODB_URI not provided, skipping MongoDB connection");
 }
+
+// Request logging middleware for debugging
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
 
 // Migration Endpoint
 app.post("/api/migrate-to-mongodb", async (req, res) => {

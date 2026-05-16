@@ -481,19 +481,30 @@ export default function App() {
 
   // Firestore Error Handler
   const handleFirestoreError = (error: any, operationType: string, path: string | null) => {
+    const errorMsg = error instanceof Error ? error.message : String(error);
     const errInfo = {
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMsg,
       operationType,
       path,
       code: error.code || 'unknown',
       auth: auth.currentUser?.uid || 'not-signed-in'
     };
     
+    console.error("Data Operation Error:", JSON.stringify(errInfo));
+
+    const isRoutingError = errorMsg.includes("non-JSON") || errorMsg.includes("Unexpected token");
+    if (isRoutingError) {
+      showToast(lang === 'id' 
+        ? 'Error Hubungan Server: Backend tidak merespon dengan benar. Periksa konfigurasi API routing.' 
+        : 'Server Connection Error: Backend did not respond correctly. Check API routing configuration.', 
+        true
+      );
+    } else {
+      showToast(lang === 'id' ? `Error Data: ${errorMsg.substring(0, 100)}` : `Data Error: ${errorMsg.substring(0, 100)}`, true);
+    }
+    
     if (errInfo.code === 'unavailable') {
       setIsOffline(true);
-      console.error("Firestore is currently unavailable. This is usually due to network issues or database misconfiguration.", JSON.stringify(errInfo));
-    } else {
-      console.error("Firestore Error:", JSON.stringify(errInfo));
     }
   };
 
