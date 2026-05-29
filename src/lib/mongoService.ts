@@ -1,7 +1,7 @@
 
 export const mongoService = {
   async list(collection: string, constraints: any[] = []) {
-    let url = `/api/mongodb/${collection}`;
+    let url = `/api/db/${collection}`;
     const params = new URLSearchParams();
     
     constraints.forEach(c => {
@@ -54,7 +54,7 @@ export const mongoService = {
   },
 
   async get(collection: string, id: string) {
-    const url = `/api/mongodb/${collection}/${id}`;
+    const url = `/api/db/${collection}/${id}`;
     let res;
     try {
       res = await fetch(url);
@@ -78,7 +78,7 @@ export const mongoService = {
   },
 
   async create(collection: string, data: any) {
-    const url = `/api/mongodb/${collection}`;
+    const url = `/api/db/${collection}`;
     let res;
     try {
       res = await fetch(url, {
@@ -102,7 +102,7 @@ export const mongoService = {
   },
 
   async update(collection: string, id: string, data: any) {
-    const url = `/api/mongodb/${collection}/${id}`;
+    const url = `/api/db/${collection}/${id}`;
     let res;
     try {
       res = await fetch(url, {
@@ -126,7 +126,7 @@ export const mongoService = {
   },
 
   async delete(collection: string, id: string) {
-    const url = `/api/mongodb/${collection}/${id}`;
+    const url = `/api/db/${collection}/${id}`;
     let res;
     try {
       res = await fetch(url, {

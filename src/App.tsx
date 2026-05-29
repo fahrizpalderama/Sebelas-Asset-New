@@ -729,11 +729,11 @@ export default function App() {
       return;
     }
 
-    let qAssetsConstraints: any[] = [orderBy('name'), limit(100)];
+    let qAssetsConstraints: any[] = [orderBy('name')];
     if (debouncedSearchQuery && searchField === 'all') {
-      qAssetsConstraints = [search(debouncedSearchQuery), limit(100)];
+      qAssetsConstraints = [search(debouncedSearchQuery)];
     } else if (debouncedSearchQuery) {
-      qAssetsConstraints = [where(searchField, '==', debouncedSearchQuery), limit(100)];
+      qAssetsConstraints = [where(searchField, '==', debouncedSearchQuery)];
     }
 
     const qAssets = query(collection(db, 'assets'), ...qAssetsConstraints);
@@ -741,7 +741,7 @@ export default function App() {
       const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Asset));
       setInventory(items);
       setLastVisibleAsset(snapshot.docs[snapshot.docs.length - 1]);
-      setHasMoreAssets(snapshot.docs.length === 100);
+      setHasMoreAssets(false); // No more pagination
       setIsOffline(false);
     }, (error) => {
       handleFirestoreError(error, 'LIST_ASSETS', 'assets');
@@ -1380,23 +1380,30 @@ export default function App() {
     const docPdf = new jsPDF('l', 'mm', 'a4') as any; // Landscape for more columns
     docPdf.text(lang === 'id' ? "Laporan Riwayat Aset Detail" : "Detailed Asset History Report", 14, 15);
 
-    // 1. Identify activities in range
+    // 1. Identify assets and activities
+    let assetsToExport = inventory;
     let filteredActivities = assetActivities;
+
     if (dateRange.start && dateRange.end) {
       filteredActivities = assetActivities.filter(activity => {
         const activityDate = activity.timestamp.split('T')[0];
         return activityDate >= dateRange.start && activityDate <= dateRange.end;
       });
-    }
+      
+      const relevantAssetCodes = Array.from(new Set(filteredActivities.map(a => a.assetCode)));
+      assetsToExport = inventory.filter(item => relevantAssetCodes.includes(item.code));
 
-    if (filteredActivities.length === 0) {
-      showToast(lang === 'id' ? "Tidak ada history aktivitas dalam rentang tanggal tersebut" : "No activity history in that date range", true);
-      return;
+      if (assetsToExport.length === 0) {
+        showToast(lang === 'id' ? "Tidak ada history aktivitas dalam rentang tanggal tersebut" : "No activity history in that date range", true);
+        return;
+      }
+    } else {
+      // If no range, we export everything. If inventory is empty, toast.
+      if (inventory.length === 0) {
+        showToast(lang === 'id' ? "Tidak ada data inventaris untuk diekspor" : "No inventory data to export", true);
+        return;
+      }
     }
-
-    // 2. Identify assets that had activities
-    const relevantAssetCodes = Array.from(new Set(filteredActivities.map(a => a.assetCode)));
-    const assetsToExport = inventory.filter(item => relevantAssetCodes.includes(item.code));
 
     // 3. Map to table rows
     const tableData = assetsToExport.map((item, index) => {
@@ -1804,20 +1811,23 @@ export default function App() {
   };
 
   const handleExportSpreadsheet = async () => {
-    // 1. Identify activities in range
+    // 1. Identify assets and activities
+    let assetsToExport = inventory;
     let filteredActivities = assetActivities;
+
     if (dateRange.start && dateRange.end) {
+      // If date range specified, we might want to filter activities
       filteredActivities = assetActivities.filter(activity => {
         const activityDate = activity.timestamp.split('T')[0];
         return activityDate >= dateRange.start && activityDate <= dateRange.end;
       });
+      
+      // If filtering by activities, we only export assets that had activities in that range
+      const relevantAssetCodes = Array.from(new Set(filteredActivities.map(a => a.assetCode)));
+      assetsToExport = inventory.filter(item => relevantAssetCodes.includes(item.code));
+
+      if (assetsToExport.length === 0) return showToast(lang === 'id' ? "Tidak ada aset dengan aktivitas di rentang tanggal tersebut" : "No assets with activities in that range", true);
     }
-
-    if (filteredActivities.length === 0) return showToast(lang === 'id' ? "Tidak ada riwayat aktivitas untuk diekspor" : "No activity history to export", true);
-
-    // 2. Identify assets that had activities
-    const relevantAssetCodes = Array.from(new Set(filteredActivities.map(a => a.assetCode)));
-    const assetsToExport = inventory.filter(item => relevantAssetCodes.includes(item.code));
 
     const headers = [
       "No",
@@ -1826,13 +1836,15 @@ export default function App() {
       lang === 'id' ? "Kategori" : "Category",
       "Outlet",
       lang === 'id' ? "Penempatan" : "Placement",
-      lang === 'id' ? "Harga" : "Price",
+      lang === 'id' ? "Harga Satuan" : "Unit Price",
       lang === 'id' ? "Satuan" : "Unit",
       lang === 'id' ? "Jumlah" : "Quantity",
+      lang === 'id' ? "Total Nilai" : "Total Value",
       lang === 'id' ? "Tanggal Pengadaan" : "Procurement Date",
       lang === 'id' ? "Usia Aset" : "Asset Age",
       lang === 'id' ? "Kondisi Aset" : "Asset Condition",
       lang === 'id' ? "Verifikator" : "Verifier",
+      lang === 'id' ? "Status" : "Status",
       lang === 'id' ? "Semua Riwayat Aset (Pemisah |)" : "All Asset History (Pipe Separated)"
     ];
 
@@ -1848,6 +1860,9 @@ export default function App() {
         return `[${dateStr}] ${a.type}: ${a.description.replace(/["\n\r;]/g, ' ')}`;
       }).join(' | ');
 
+      const price = Number(item.price) || 0;
+      const quantity = Number(item.quantity) || 0;
+
       return [
         index + 1,
         `"${(item.name || '').replace(/"/g, '""')}"`,
@@ -1855,18 +1870,20 @@ export default function App() {
         `"${(item.category || '').replace(/"/g, '""')}"`,
         `"${(item.outlet || '').replace(/"/g, '""')}"`,
         `"${(item.placement || '').replace(/"/g, '""')}"`,
-        `"${item.price || 0}"`,
+        `"${price}"`,
         `"${(item.unit || '').replace(/"/g, '""')}"`,
-        `"${item.quantity || 0}"`,
+        `"${quantity}"`,
+        `"${price * quantity}"`,
         `"${item.date || ''}"`,
         `"${calculateAge(item.date)}"`,
         `"${(item.condition || '').replace(/"/g, '""')}"`,
         `"${(item.verifier || '').replace(/"/g, '""')}"`,
+        `"${(item.status || 'Normal').replace(/"/g, '""')}"`,
         `"${historyStr.replace(/"/g, '""')}"`
       ];
     });
 
-    const csvContent = "\ufeff" + headers.join(separator) + "\n" 
+    const csvContent = "\ufeffsep=;\n" + headers.join(separator) + "\n" 
       + rows.map(e => e.join(separator)).join("\n");
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1884,14 +1901,14 @@ export default function App() {
     showToast(lang === 'id' ? "Berhasil ekspor Spreadsheet Detail!" : "Detailed Spreadsheet Exported!");
   };
 
-  const handleMigration = async () => {
+  const handleSupabaseMigration = async () => {
     setConfirmModal({
       show: true,
-      title: lang === 'id' ? 'Konfirmasi Migrasi Data' : 'Data Migration Confirmation',
+      title: lang === 'id' ? 'Migrasi Data ke Supabase' : 'Supabase Data Migration',
       message: lang === 'id' 
-        ? 'Data dari Firestore akan disalin ke MongoDB Atlas. Proses ini mungkin memakan waktu beberapa menit tergantung jumlah data. Lanjutkan?' 
-        : 'Data from Firestore will be copied to MongoDB Atlas. This process may take a few minutes depending on the data volume. Continue?',
-      confirmText: lang === 'id' ? 'Ya, Migrasi Sekarang' : 'Yes, Migrate Now',
+        ? 'Apakah Anda ingin memindahkan seluruh database dari Firestore ke Supabase? Pastikan Anda sudah menjalankan query di berkas "/supabase_schema.sql" di SQL Editor Supabase Anda terlebih dahulu.' 
+        : 'Do you want to copy all database collections from Firestore to Supabase? Make sure you have executed the query inside "/supabase_schema.sql" in your Supabase SQL Editor first.',
+      confirmText: lang === 'id' ? 'Ya, Migrasi ke Supabase' : 'Yes, Migrate to Supabase',
       onConfirm: async () => {
         setIsMigrating(true);
         try {
@@ -1914,9 +1931,7 @@ export default function App() {
               }));
 
               if (docs.length > 0) {
-                // For very large collections, we could chunk here, 
-                // but with 50mb limit it should handle most cases.
-                const response = await fetch('/api/migrate-to-mongodb', {
+                const response = await fetch('/api/migrate-to-supabase', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -1938,8 +1953,6 @@ export default function App() {
                   errors.push(`${colName}: ${response.status} ${response.statusText} - ${errorText.substring(0, 100)}...`);
                 }
               }
-              
-              // Small delay between collections to breathe
               await new Promise(resolve => setTimeout(resolve, 500));
             } catch (err: any) {
               errors.push(`${colName}: ${err.message}`);
@@ -1949,21 +1962,21 @@ export default function App() {
           if (errors.length > 0) {
             showToast(
               lang === 'id' 
-                ? `Migrasi selesai dengan ${errors.length} error. Total ${totalMigrated} dokumen dipindahkan.` 
-                : `Migration finished with ${errors.length} errors. Total ${totalMigrated} documents moved.`,
+                ? `Migrasi Supabase selesai dengan ${errors.length} error. Total ${totalMigrated} data dipindahkan.` 
+                : `Supabase migration finished with ${errors.length} errors. Total ${totalMigrated} documents moved.`,
               true
             );
-            console.error('Migration errors:', errors);
+            console.error('Supabase Migration errors:', errors);
           } else {
             showToast(
               lang === 'id' 
-                ? `Migrasi Berhasil! Semua data (${totalMigrated} dokumen) telah dipindahkan.` 
-                : `Migration Successful! All data (${totalMigrated} documents) moved.`
+                ? `Migrasi ke Supabase Berhasil! Semua data (${totalMigrated} data) telah disalin.` 
+                : `Supabase Migration Successful! All data (${totalMigrated} documents) moved.`
             );
           }
         } catch (error) {
-          console.error('Migration overall error:', error);
-          showToast(lang === 'id' ? 'Terjadi kesalahan sistem saat migrasi.' : 'System error during migration.', true);
+          console.error('Supabase Migration overall error:', error);
+          showToast(lang === 'id' ? 'Terjadi kesalahan sistem saat migrasi ke Supabase.' : 'System error during Supabase migration.', true);
         } finally {
           setIsMigrating(false);
           setConfirmModal({ show: false, title: '', message: '', confirmText: '', onConfirm: () => {} });
@@ -2011,7 +2024,7 @@ export default function App() {
             isAdmin={isAdmin}
             refreshDashboardAggregation={refreshDashboardAggregation}
             allAssetRefs={allAssetRefs}
-            onMigrate={handleMigration}
+            onSupabaseMigrate={handleSupabaseMigration}
             isMigrating={isMigrating}
           />
         );
@@ -3109,7 +3122,7 @@ export default function App() {
 }
 
 // Performance Optimized Views
-const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summaryStats, isAdmin, refreshDashboardAggregation, allAssetRefs, onMigrate, isMigrating }: any) => {
+const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summaryStats, isAdmin, refreshDashboardAggregation, allAssetRefs, onSupabaseMigrate, isMigrating }: any) => {
   const [range, setRange] = useState<'0' | '7' | '15' | '30'>('15');
   
   const currentReportStats = useMemo(() => {
@@ -3182,11 +3195,12 @@ const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summ
               >
                 <RefreshCw className="w-4 h-4 text-slate-400 group-hover:text-accent-purple group-active:rotate-180 transition-all duration-500" />
               </button>
+
               <button 
-                onClick={onMigrate}
+                onClick={onSupabaseMigrate}
                 disabled={isMigrating}
-                className="px-4 py-2 bg-emerald-500/10 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ml-2"
-                title={lang === 'id' ? "Migrasi ke MongoDB" : "Migrate to MongoDB"}
+                className="px-4 py-2 bg-blue-500/10 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ml-2"
+                title={lang === 'id' ? "Migrasi ke Supabase" : "Migrate to Supabase"}
               >
                 {isMigrating ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -3195,7 +3209,7 @@ const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summ
                 )}
                 {isMigrating 
                   ? (lang === 'id' ? 'Memindahkan...' : 'Migrating...') 
-                  : (lang === 'id' ? 'Migrasi MongoDB' : 'MongoDB Migration')
+                  : (lang === 'id' ? 'Migrasi Supabase' : 'Supabase Migration')
                 }
               </button>
              </>
@@ -3765,22 +3779,7 @@ const InventoryView = React.memo(({ t, lang, filteredInventory, searchQuery, set
         )}
       </div>
 
-      {hasMoreAssets && (
-        <div className="mt-12 flex justify-center">
-          <button 
-            onClick={loadMoreAssets}
-            disabled={assetsLoading}
-            className="px-10 py-5 bg-dashboard-bg dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-800 dark:text-white rounded-[32px] text-xs font-black uppercase tracking-widest tracking-[0.2em] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 border border-slate-200 dark:border-white/5"
-          >
-            {assetsLoading ? (
-              <RefreshCw className="w-4 h-4 animate-spin text-accent-brown" />
-            ) : (
-              <Plus className="w-4 h-4" />
-            )}
-            {lang === 'id' ? 'Muat Lebih Banyak' : 'Load More'}
-          </button>
-        </div>
-      )}
+      {/* Load More removed as all assets are shown at once */}
     </div>
   );
 });
