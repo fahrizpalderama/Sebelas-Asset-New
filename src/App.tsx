@@ -78,7 +78,8 @@ import {
   Menu,
   Table2,
   BookOpen,
-  Database
+  Database,
+  Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Asset, Report, User as UserType, UserRole, Vendor, AssetActivity, ProcurementRecord } from './types';
@@ -480,6 +481,9 @@ export default function App() {
   const [allAssetRefs, setAllAssetRefs] = useState<any[]>([]);
   const [isSimulationMode, setIsSimulationMode] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
+  const [showDbDiagnostics, setShowDbDiagnostics] = useState(false);
+  const [dbDiagnosticsData, setDbDiagnosticsData] = useState<any>(null);
+  const [dbDiagnosticsLoading, setDbDiagnosticsLoading] = useState(false);
 
   // Firestore Error Handler
   const handleFirestoreError = (error: any, operationType: string, path: string | null) => {
@@ -1985,6 +1989,26 @@ export default function App() {
     });
   };
 
+  const handleCheckDbDiagnostics = async () => {
+    setShowDbDiagnostics(true);
+    setDbDiagnosticsLoading(true);
+    setDbDiagnosticsData(null);
+    try {
+      const res = await fetch("/api/db-diagnostics");
+      if (res.ok) {
+        const data = await res.json();
+        setDbDiagnosticsData(data);
+      } else {
+        const txt = await res.text();
+        showToast(lang === 'id' ? `Gagal memeriksa database: ${txt}` : `Failed to check database: ${txt}`, true);
+      }
+    } catch (e: any) {
+      showToast(lang === 'id' ? `Error koneksi: ${e.message}` : `Connection error: ${e.message}`, true);
+    } finally {
+      setDbDiagnosticsLoading(false);
+    }
+  };
+
   // Nav Helpers
   const isLocked = (tab: string) => {
     if (!currentUser) return true;
@@ -2026,6 +2050,8 @@ export default function App() {
             allAssetRefs={allAssetRefs}
             onSupabaseMigrate={handleSupabaseMigration}
             isMigrating={isMigrating}
+            onCheckDbDiagnostics={handleCheckDbDiagnostics}
+            isCheckingDbDiagnostics={dbDiagnosticsLoading}
           />
         );
       case 'input':
@@ -3116,13 +3142,177 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Database Diagnostics Modal */}
+      <AnimatePresence>
+        {showDbDiagnostics && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowDbDiagnostics(false)}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-2xl bg-white dark:bg-dark-card rounded-[40px] shadow-2xl overflow-hidden border border-slate-200 dark:border-white/5 flex flex-col max-h-[90vh]"
+            >
+              <div className="p-8 sm:p-10 border-b border-slate-100 dark:border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-emerald-500/10 text-emerald-600 rounded-2xl flex items-center justify-center">
+                    <Activity className="w-6 h-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-slate-800 dark:text-white uppercase tracking-tight">
+                      {lang === 'id' ? 'Status Integrasi Supabase' : 'Supabase Table Diagnostics'}
+                    </h2>
+                    <p className="text-xs text-slate-400 font-medium">
+                      {lang === 'id' ? 'Hasil verifikasi pembacaan tabel database langsung.' : 'Live schema queries and connection status verification.'}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowDbDiagnostics(false)} 
+                  className="w-10 h-10 flex items-center justify-center bg-slate-100 dark:bg-white/5 rounded-2xl text-slate-400 hover:text-red-500 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-8 sm:p-10 overflow-y-auto space-y-6 flex-1 custom-scrollbar">
+                {dbDiagnosticsLoading ? (
+                  <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                    <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin" />
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-widest animate-pulse">
+                      {lang === 'id' ? 'Menghubungkan & Memindai Skema...' : 'Connecting & Scanning Schema...'}
+                    </p>
+                  </div>
+                ) : dbDiagnosticsData ? (
+                  <div className="space-y-6">
+                    {/* Overall Status Badge */}
+                    <div className="p-6 rounded-3xl bg-slate-50 dark:bg-white/5 border border-slate-100 dark:border-white/5 flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
+                          {lang === 'id' ? 'Konektivitas Global' : 'Global Connectivity'}
+                        </p>
+                        <h4 className="text-lg font-black text-slate-800 dark:text-white mt-1">
+                          {dbDiagnosticsData.supabase_connected 
+                            ? (lang === 'id' ? 'Supabase Terhubung' : 'Supabase Active & Configured') 
+                            : (lang === 'id' ? 'Menggunakan Penyimpanan Lokal' : 'Offline / JSON Fallback Mode')
+                          }
+                        </h4>
+                        <p className="text-xs text-slate-400 mt-1 font-medium">
+                          {dbDiagnosticsData.supabase_connected 
+                            ? (lang === 'id' ? 'Aktivitas baca/tulis disinkronkan secara langsung ke cloud.' : 'Active operations are continuously synchronized in real-time with your cloud database.')
+                            : (lang === 'id' ? 'Supabase belum dikonfigurasi. Menulis ke penyimpanan JSON cadangan server di container.' : 'No credentials configured yet. Running safely in Local File DB fallback mode.')
+                          }
+                        </p>
+                      </div>
+                      <div className={`px-4 py-2 rounded-full font-black text-[9px] uppercase tracking-wider shrink-0 ${
+                        dbDiagnosticsData.supabase_connected 
+                          ? 'bg-emerald-500/10 text-emerald-600' 
+                          : 'bg-amber-500/10 text-amber-500'
+                      }`}>
+                        {dbDiagnosticsData.supabase_connected ? 'Active' : 'Fallback'}
+                      </div>
+                    </div>
+
+                    {/* Table Schema Status Checklist */}
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">
+                        {lang === 'id' ? 'Daftar Tabel Database & Status Verifikasi' : 'Database Tables & Schema Validation'}
+                      </h3>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {dbDiagnosticsData.tables && dbDiagnosticsData.tables.map((tbl: any) => (
+                          <div 
+                            key={tbl.name} 
+                            className="p-4 rounded-2xl bg-white dark:bg-white/5 border border-slate-100 dark:border-white/5 flex items-center justify-between gap-3 shadow-sm hover:border-slate-300 dark:hover:border-white/10 transition-all"
+                          >
+                            <div className="truncate">
+                              <p className="font-mono text-xs text-slate-800 dark:text-slate-200 truncate" title={tbl.name}>
+                                {tbl.name}
+                              </p>
+                              {tbl.status === 'OK' ? (
+                                <p className="text-[10px] text-slate-400 mt-0.5 font-bold">
+                                  {lang === 'id' ? `${tbl.count} baris terbaca` : `${tbl.count} records fetched`}
+                                </p>
+                              ) : (
+                                <p className="text-[10px] text-red-500 mt-0.5 font-bold truncate" title={tbl.errorMessage}>
+                                  {lang === 'id' ? 'Tabel belum didefinisikan' : 'Table missing/unindexed'}
+                                </p>
+                              )}
+                            </div>
+
+                            <span className={`shrink-0 px-3 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider ${
+                              tbl.status === 'OK' 
+                                ? 'bg-emerald-500/10 text-emerald-500' 
+                                : 'bg-red-500/10 text-red-500'
+                            }`}>
+                              {tbl.status === 'OK' ? 'OK' : 'Missing'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Missing Instructions Alerts */}
+                    {dbDiagnosticsData.tables && dbDiagnosticsData.tables.some((t: any) => t.status !== 'OK') && (
+                      <div className="p-6 rounded-3xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-300 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-5 h-5 shrink-0" />
+                          <h4 className="font-black text-xs uppercase tracking-wider">
+                            {lang === 'id' ? 'Beberapa Tabel Belum Dibuat di Supabase!' : 'Action Required: Schema Mismatch!'}
+                          </h4>
+                        </div>
+                        <p className="text-xs">
+                          {lang === 'id' 
+                            ? 'Beberapa tabel di atas belum dibuat atau skemanya tidak sesuai. Untuk mengaktifkan sinkronisasi Supabase secara penuh, buka SQL Editor di dashboard Supabase Anda, lalu salin dan jalankan seluruh query SQL dari berkas "/supabase_schema.sql" yang ada dalam proyek ini.' 
+                            : 'Some database tables do not exist in your Supabase project. To resolve this and enable full sync support, please copy the complete contents of `/supabase_schema.sql` and run it in the SQL Editor of your Supabase Dashboard.'
+                          }
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-slate-400 text-xs font-semibold">
+                      {lang === 'id' ? 'Tidak ada data diagnostik.' : 'No diagnostics data available.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-8 sm:p-10 border-t border-slate-100 dark:border-white/5 flex gap-4">
+                <button 
+                  onClick={handleCheckDbDiagnostics} 
+                  disabled={dbDiagnosticsLoading}
+                  className="flex-1 py-4 bg-emerald-500 text-white rounded-full font-black text-[10px] uppercase tracking-widest shadow-xl shadow-emerald-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 text-center flex items-center justify-center gap-2"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${dbDiagnosticsLoading ? 'animate-spin' : ''}`} />
+                  {lang === 'id' ? 'Ulang Diagnostik' : 'Re-verify Database'}
+                </button>
+                <button 
+                  onClick={() => setShowDbDiagnostics(false)} 
+                  className="px-8 py-4 bg-slate-100 dark:bg-white/5 text-slate-500 dark:text-slate-300 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all text-center"
+                >
+                  {lang === 'id' ? 'Tutup' : 'Close'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <canvas ref={canvasRef} className="hidden" />
     </div>
   );
 }
 
 // Performance Optimized Views
-const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summaryStats, isAdmin, refreshDashboardAggregation, allAssetRefs, onSupabaseMigrate, isMigrating }: any) => {
+const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summaryStats, isAdmin, refreshDashboardAggregation, allAssetRefs, onSupabaseMigrate, isMigrating, onCheckDbDiagnostics, isCheckingDbDiagnostics }: any) => {
   const [range, setRange] = useState<'0' | '7' | '15' | '30'>('15');
   
   const currentReportStats = useMemo(() => {
@@ -3210,6 +3400,23 @@ const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summ
                 {isMigrating 
                   ? (lang === 'id' ? 'Memindahkan...' : 'Migrating...') 
                   : (lang === 'id' ? 'Migrasi Supabase' : 'Supabase Migration')
+                }
+              </button>
+
+              <button 
+                onClick={onCheckDbDiagnostics}
+                disabled={isCheckingDbDiagnostics}
+                className="px-4 py-2 bg-emerald-500/10 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ml-2 font-black"
+                title={lang === 'id' ? "Periksa Integrasi Supabase" : "Verify Supabase Columns & Setup"}
+              >
+                {isCheckingDbDiagnostics ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Activity className="w-3.5 h-3.5" />
+                )}
+                {isCheckingDbDiagnostics 
+                  ? (lang === 'id' ? 'Memeriksa...' : 'Checking...') 
+                  : (lang === 'id' ? 'Status Database' : 'Database Status')
                 }
               </button>
              </>

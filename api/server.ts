@@ -100,6 +100,82 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Dynamic Supabase Database Diagnostics Check
+app.get("/api/db-diagnostics", async (req, res) => {
+  if (!supabaseClient) {
+    return res.json({
+      supabase_configured: false,
+      supabase_connected: false,
+      tables: []
+    });
+  }
+
+  const tables = [
+    "users",
+    "assets",
+    "reports",
+    "asset_activities",
+    "procurements",
+    "vendors_service",
+    "vendors_procurement",
+    "guides",
+    "category_outlets",
+    "category_placements",
+    "category_vendors",
+    "category_ownerships",
+    "category_priorities",
+    "category_guides"
+  ];
+
+  const results = [];
+  for (const table of tables) {
+    try {
+      const { data, count, error } = await supabaseClient
+        .from(table)
+        .select('id', { count: 'exact' })
+        .limit(1);
+
+      if (error) {
+        if (isTableMissingError(error, table)) {
+          results.push({
+            name: table,
+            status: "MISSING",
+            count: null,
+            errorMessage: "Table is missing in the database schema."
+          });
+        } else {
+          results.push({
+            name: table,
+            status: "ERROR",
+            count: null,
+            errorMessage: error.message || String(error)
+          });
+        }
+      } else {
+        results.push({
+          name: table,
+          status: "OK",
+          count: count !== null ? count : (data ? data.length : 0),
+          errorMessage: null
+        });
+      }
+    } catch (e: any) {
+      results.push({
+        name: table,
+        status: "ERROR",
+        count: null,
+        errorMessage: e.message || String(e)
+      });
+    }
+  }
+
+  return res.json({
+    supabase_configured: true,
+    supabase_connected: true,
+    tables: results
+  });
+});
+
 // Transparent route rewrite helper to map legacy /api/mongodb/ calls to /api/db/
 app.use((req, res, next) => {
   if (req.url.startsWith("/api/mongodb/")) {
