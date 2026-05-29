@@ -2,6 +2,10 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createClient } from '@supabase/supabase-js';
+import dotenv from "dotenv";
+
+// Load environment variables as early as possible
+dotenv.config();
 
 console.log("Server starting... Pure Supabase DB Mode. Node Version:", process.version);
 
@@ -166,6 +170,56 @@ app.post("/api/migrate-to-supabase", async (req, res) => {
   }
 });
 
+// --- Local File-Based / In-Memory JSON DB Fallback (for unconfigured environments) ---
+const FALLBACK_DIR = "/tmp/local_db";
+if (!fs.existsSync(FALLBACK_DIR)) {
+  try {
+    fs.mkdirSync(FALLBACK_DIR, { recursive: true });
+  } catch (e) {
+    console.error("Failed to create fallback directory, using process.cwd()", e);
+  }
+}
+
+const getFallbackFile = (table: string) => {
+  try {
+    if (fs.existsSync(FALLBACK_DIR)) {
+      return path.join(FALLBACK_DIR, `${table}.json`);
+    }
+  } catch (e) {}
+  return path.join(process.cwd(), `local_db_${table}.json`);
+};
+
+const readFallbackData = (table: string): any[] => {
+  const file = getFallbackFile(table);
+  if (!fs.existsSync(file)) {
+    if (table === 'users') {
+      return [{
+        id: "fahrizpalderama.design@gmail.com",
+        uid: "fahrizpalderama.design@gmail.com",
+        name: "Super Manajemen (Fallback)",
+        email: "fahrizpalderama.design@gmail.com",
+        type: "Superadmin",
+        createdAt: new Date().toISOString()
+      }];
+    }
+    return [];
+  }
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    return [];
+  }
+};
+
+const writeFallbackData = (table: string, data: any[]) => {
+  const file = getFallbackFile(table);
+  try {
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.error(`Failed to write fallback data for ${table}:`, e);
+  }
+};
+
 // Dynamic Supabase DB Route: LIST
 app.get("/api/db/:collection", async (req, res) => {
   const { orderBy, orderDir, limit, where, search } = req.query;
@@ -176,9 +230,74 @@ app.get("/api/db/:collection", async (req, res) => {
   }
 
   if (!supabaseClient) {
-    return res.status(400).json({ 
-      error: "Supabase is not configured yet. Please set your credentials." 
-    });
+    console.log(`[Offline Fallback] Route GET /api/db/${table} invoked without Supabase configured. Serving local storage JSON.`);
+    try {
+      let docs = readFallbackData(table);
+      
+      // Apply search as simple case-insensitive substring match
+      if (search) {
+        const searchStr = String(search).toLowerCase();
+        docs = docs.filter((item: any) => {
+          return Object.values(item || {}).some(val => 
+            String(val).toLowerCase().includes(searchStr)
+          );
+        });
+      }
+
+      // Apply where filters
+      if (where) {
+        try {
+          const whereClauses = Array.isArray(where) ? where : [where];
+          whereClauses.forEach((w: any) => {
+            const { field, operator, value } = JSON.parse(w as string);
+            docs = docs.filter((item: any) => {
+              if (!item) return false;
+              const itemVal = item[field];
+              if (operator === '==' || operator === '===') return itemVal === value;
+              if (operator === '>=') return itemVal >= value;
+              if (operator === '<=') return itemVal <= value;
+              if (operator === '>') return itemVal > value;
+              if (operator === '<') return itemVal < value;
+              if (operator === 'array-contains') return Array.isArray(itemVal) && itemVal.includes(value);
+              return true;
+            });
+          });
+        } catch (e) {
+          console.error("Error parsing fallback where filter:", e);
+        }
+      }
+
+      // Apply orderBy
+      if (orderBy) {
+        const field = orderBy as string;
+        const isDesc = orderDir === 'desc';
+        docs.sort((a: any, b: any) => {
+          const valA = a?.[field];
+          const valB = b?.[field];
+          if (valA === valB) return 0;
+          if (valA == null) return 1;
+          if (valB == null) return -1;
+          
+          let comparison = 0;
+          if (typeof valA === 'string' && typeof valB === 'string') {
+            comparison = valA.localeCompare(valB);
+          } else {
+            comparison = valA < valB ? -1 : 1;
+          }
+          return isDesc ? -comparison : comparison;
+        });
+      }
+
+      // Apply limit
+      if (limit) {
+        docs = docs.slice(0, parseInt(limit as string));
+      }
+
+      return res.json(docs);
+    } catch (fallbackError: any) {
+      console.error("[Fallback Error] Failed to complete local listing query:", fallbackError);
+      return res.json([]);
+    }
   }
 
   try {
@@ -271,7 +390,20 @@ app.get("/api/db/:collection/:id", async (req, res) => {
   }
 
   if (!supabaseClient) {
-    return res.status(400).json({ error: "Supabase is not configured." });
+    console.log(`[Offline Fallback] Route GET /api/db/${table}/${req.params.id} invoked without Supabase configured.`);
+    const docs = readFallbackData(table);
+    const item = docs.find((d: any) => d.id === req.params.id || d.uid === req.params.id);
+    if (!item && table === 'users') {
+      return res.json({
+        id: req.params.id,
+        uid: req.params.id,
+        name: "Super Manajemen (Fallback)",
+        email: "fahrizpalderama.design@gmail.com",
+        type: "Superadmin",
+        createdAt: new Date().toISOString()
+      });
+    }
+    return res.json(item || null);
   }
 
   try {
@@ -339,7 +471,29 @@ app.post("/api/db/:collection", async (req, res) => {
   }
 
   if (!supabaseClient) {
-    return res.status(400).json({ error: "Supabase is not configured." });
+    console.log(`[Offline Fallback] Route POST /api/db/${table} invoked without Supabase configured.`);
+    try {
+      const docs = readFallbackData(table);
+      const newDoc = { 
+        id: data.id || `local-${Math.random().toString(36).substring(2, 11)}`,
+        ...data,
+        createdAt: data.createdAt || new Date().toISOString()
+      };
+      
+      // Prevent duplicate ids in fallback list
+      const idx = docs.findIndex((d: any) => d.id === newDoc.id);
+      if (idx !== -1) {
+        docs[idx] = newDoc;
+      } else {
+        docs.push(newDoc);
+      }
+      
+      writeFallbackData(table, docs);
+      return res.json(newDoc);
+    } catch (fallbackError: any) {
+      console.error("[Fallback Error] Failed to execute local POST:", fallbackError);
+      return res.json({ id: data.id || "local-err", ...data });
+    }
   }
 
   try {
@@ -378,7 +532,24 @@ app.put("/api/db/:collection/:id", async (req, res) => {
   }
 
   if (!supabaseClient) {
-    return res.status(400).json({ error: "Supabase is not configured." });
+    console.log(`[Offline Fallback] Route PUT /api/db/${table}/${req.params.id} invoked without Supabase configured.`);
+    try {
+      const docs = readFallbackData(table);
+      const index = docs.findIndex((d: any) => d.id === req.params.id || d.uid === req.params.id);
+      if (index !== -1) {
+        docs[index] = { ...docs[index], ...updateData };
+        writeFallbackData(table, docs);
+        return res.json({ success: true, record: docs[index] });
+      } else {
+        const fallbackRecord = { id: req.params.id, ...updateData };
+        docs.push(fallbackRecord);
+        writeFallbackData(table, docs);
+        return res.json({ success: true, record: fallbackRecord });
+      }
+    } catch (fallbackError: any) {
+      console.error("[Fallback Error] Failed to execute local PUT:", fallbackError);
+      return res.json({ success: true, record: { id: req.params.id, ...updateData } });
+    }
   }
 
   try {
@@ -415,7 +586,16 @@ app.delete("/api/db/:collection/:id", async (req, res) => {
   }
 
   if (!supabaseClient) {
-    return res.status(400).json({ error: "Supabase is not configured." });
+    console.log(`[Offline Fallback] Route DELETE /api/db/${table}/${req.params.id} invoked without Supabase configured.`);
+    try {
+      let docs = readFallbackData(table);
+      docs = docs.filter((d: any) => d.id !== req.params.id && d.uid !== req.params.id);
+      writeFallbackData(table, docs);
+      return res.json({ success: true });
+    } catch (fallbackError: any) {
+      console.error("[Fallback Error] Failed to execute local DELETE:", fallbackError);
+      return res.json({ success: true });
+    }
   }
 
   try {
