@@ -467,7 +467,7 @@ export default function App() {
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [summaryStats, setSummaryStats] = useState<any>(null);
   const [allAssetRefs, setAllAssetRefs] = useState<any[]>([]);
-  const [isSimulationMode, setIsSimulationMode] = useState(false);
+  const isSimulationMode = false;
   const [isMigrating, setIsMigrating] = useState(false);
   const [showDbDiagnostics, setShowDbDiagnostics] = useState(false);
   const [dbDiagnosticsData, setDbDiagnosticsData] = useState<any>(null);
@@ -2303,18 +2303,6 @@ export default function App() {
                 </div>
 
               <div className="mt-auto p-8 pt-4 border-t border-white/5 space-y-4">
-                <div className="px-6 flex flex-col gap-2">
-                   <button 
-                     onClick={() => setIsSimulationMode(!isSimulationMode)}
-                     className={`w-full flex items-center justify-between gap-4 px-5 py-3 rounded-2xl border transition-all ${isSimulationMode ? 'bg-amber-500/10 border-amber-500/50 text-amber-500 shadow-md shadow-amber-500/20' : 'bg-white/5 border-white/5 text-slate-500 hover:text-amber-500 hover:border-amber-500/30'}`}
-                   >
-                     <div className="flex items-center gap-3">
-                       <RefreshCw className={`w-4 h-4 ${isSimulationMode ? 'animate-spin-slow text-amber-500' : ''}`} />
-                       <span className="text-[10px] font-black uppercase tracking-widest">{lang === 'id' ? 'Simulasi' : 'Simulation'}</span>
-                     </div>
-                     <div className={`w-2 h-2 rounded-full ${isSimulationMode ? 'bg-amber-500 animate-pulse' : 'bg-slate-700'}`} />
-                   </button>
-                </div>
 
                 <div className="flex items-center gap-3 px-6">
                   <div className="w-10 h-10 rounded-2xl overflow-hidden shadow-lg bg-gradient-primary p-0.5 flex-shrink-0">
@@ -2374,13 +2362,6 @@ export default function App() {
             </div>
 
             <div className="absolute top-8 right-8 flex items-center gap-2">
-              <button 
-                onClick={() => setIsSimulationMode(!isSimulationMode)}
-                className={`w-10 h-10 border rounded-xl flex items-center justify-center transition p-2 ${isSimulationMode ? 'bg-amber-500 border-amber-600 text-white shadow-lg' : 'bg-slate-50 dark:bg-white/5 border-slate-100 dark:border-white/10 text-slate-400 hover:text-amber-500'}`}
-                title={lang === 'id' ? "Mode Simulasi" : "Simulation Mode"}
-              >
-                <RefreshCw className={`w-4 h-4 ${isSimulationMode ? 'animate-spin-slow' : ''}`} />
-              </button>
               <button 
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className="w-10 h-10 bg-slate-50 dark:bg-white/5 border border-slate-100 dark:border-white/10 rounded-xl flex items-center justify-center text-slate-400 hover:text-accent-purple transition"
