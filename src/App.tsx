@@ -127,7 +127,7 @@ export default function App() {
   const isAdmin = currentUser?.type === 'Manajemen' || currentUser?.type === 'Superadmin';
   const [loading, setLoading] = useState(true);
   // Language and Theme State
-  const [lang, setLang] = useState<'id' | 'en'>(() => (localStorage.getItem('lang') as 'id' | 'en') || 'id');
+  const lang = 'id';
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('theme');
@@ -154,10 +154,6 @@ export default function App() {
   const openConfirm = (title: string, message: string, onConfirm: () => void, confirmText?: string) => {
     setConfirmModal({ show: true, title, message, onConfirm, confirmText });
   };
-
-  useEffect(() => {
-    localStorage.setItem('lang', lang);
-  }, [lang]);
 
   // Memoized Translations
   const t = useMemo(() => ({
@@ -2386,12 +2382,6 @@ export default function App() {
                 <RefreshCw className={`w-4 h-4 ${isSimulationMode ? 'animate-spin-slow' : ''}`} />
               </button>
               <button 
-                onClick={() => setLang(lang === 'id' ? 'en' : 'id')}
-                className="w-10 h-10 bg-slate-50 dark:bg-white/5 border border-slate-100 dark:border-white/10 rounded-xl flex items-center justify-center text-[10px] font-bold text-slate-400 hover:text-accent-purple transition uppercase"
-              >
-                {lang === 'id' ? 'EN' : 'ID'}
-              </button>
-              <button 
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className="w-10 h-10 bg-slate-50 dark:bg-white/5 border border-slate-100 dark:border-white/10 rounded-xl flex items-center justify-center text-slate-400 hover:text-accent-purple transition"
               >
@@ -2695,12 +2685,6 @@ export default function App() {
                       className="p-3 bg-white dark:bg-dark-card rounded-2xl shadow-sm hover:shadow-md transition text-slate-400 hover:text-accent-purple"
                     >
                       {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-                    </button>
-                    <button 
-                      onClick={() => setLang(lang === 'id' ? 'en' : 'id')}
-                      className="px-4 py-3 bg-white dark:bg-dark-card rounded-2xl shadow-sm hover:shadow-md transition text-[10px] font-extrabold uppercase tracking-widest text-slate-400 hover:text-accent-purple"
-                    >
-                      {lang === 'id' ? 'EN' : 'ID'}
                     </button>
                   </div>
                </div>
@@ -3354,10 +3338,7 @@ const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summ
         </div>
         
         <div className="flex items-center gap-4 bg-white/50 dark:bg-white/5 p-2 rounded-2xl border border-slate-100 dark:border-white/5 backdrop-blur-xl">
-           <div className="flex items-center gap-3 px-4 border-r border-slate-200 dark:border-white/10">
-              <Calendar className="w-4 h-4 text-accent-purple" />
-              <DigitalClock />
-           </div>
+
            {isAdmin && (
              <>
               <button 
@@ -3368,22 +3349,7 @@ const DashboardView = React.memo(({ stats, chartData, dashboardStats, lang, summ
                 <RefreshCw className="w-4 h-4 text-slate-400 group-hover:text-accent-purple group-active:rotate-180 transition-all duration-500" />
               </button>
 
-              <button 
-                onClick={onSupabaseMigrate}
-                disabled={isMigrating}
-                className="px-4 py-2 bg-blue-500/10 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ml-2"
-                title={lang === 'id' ? "Migrasi ke Supabase" : "Migrate to Supabase"}
-              >
-                {isMigrating ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Database className="w-3.5 h-3.5" />
-                )}
-                {isMigrating 
-                  ? (lang === 'id' ? 'Memindahkan...' : 'Migrating...') 
-                  : (lang === 'id' ? 'Migrasi Supabase' : 'Supabase Migration')
-                }
-              </button>
+
 
               <button 
                 onClick={onCheckDbDiagnostics}
