@@ -83,15 +83,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Asset, Report, User as UserType, UserRole, Vendor, AssetActivity, ProcurementRecord } from './types';
-import { auth, googleProvider } from './lib/firebase';
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signInWithPopup, 
-  onAuthStateChanged,
-  signOut,
-  sendPasswordResetEmail
-} from 'firebase/auth';
+import { authService, loadAuthConfig } from './lib/authService';
 import { 
   collection, 
   addDoc, 
@@ -493,7 +485,7 @@ export default function App() {
       operationType,
       path,
       code: error.code || 'unknown',
-      auth: auth.currentUser?.uid || 'not-signed-in'
+      auth: currentUser?.uid || 'not-signed-in'
     };
     
     console.error("Data Operation Error:", JSON.stringify(errInfo));
@@ -542,50 +534,30 @@ export default function App() {
   // Refs for Image Processing
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Auth Listener
+  // Auth Listener (Fully powered by Supabase with Local Fallback)
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    authService.init((user) => {
       if (user) {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
-          const isAdminEmail = user.email?.toLowerCase() === 'fahrizpalderama.design@gmail.com';
+        // Enforce admin check for owner email
+        const isAdminEmail = user.email?.toLowerCase() === 'fahrizpalderama.design@gmail.com';
+        if (isAdminEmail && user.type !== 'Superadmin') {
+          const updatedUser = { ...user, type: 'Superadmin' as UserRole };
+          setCurrentUser(updatedUser);
           
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as UserType;
-            if (isAdminEmail && userData.type !== 'Superadmin') {
-              const updatedData = { ...userData, type: 'Superadmin' as UserRole };
-              await setDoc(doc(db, 'users', user.uid), updatedData);
-              setCurrentUser(updatedData);
-            } else {
-              setCurrentUser(userData);
-            }
-          } else {
-            // If profile missing (could be Google login or incomplete Email registration)
-            // We check if provider is google to auto-create, otherwise we wait for handleAuth
-            const isGoogle = user.providerData.some(p => p.providerId === 'google.com');
-            if (isGoogle || isAdminEmail) {
-              const newUser: UserType = {
-                uid: user.uid,
-                name: user.displayName || 'Super Manajemen',
-                email: user.email || '',
-                type: isAdminEmail ? 'Superadmin' : 'Store Manager'
-              };
-              await setDoc(doc(db, 'users', user.uid), newUser);
-              setCurrentUser(newUser);
-            } else {
-              setCurrentUser(null);
-            }
-          }
-        } catch (error) {
-          console.error("Auth Listener Profile Error:", error);
-          setCurrentUser(null);
+          // Try to sync with server profile database asynchronously
+          fetch(`/api/db/users/${user.uid || user.id || user.email}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatedUser)
+          }).catch(err => console.error("Admin sync error:", err));
+        } else {
+          setCurrentUser(user);
         }
       } else {
         setCurrentUser(null);
       }
       setLoading(false);
     });
-    return () => unsubscribe();
   }, []);
 
   // --- Performance Optimized Data ---
@@ -901,7 +873,7 @@ export default function App() {
     let timeoutId: any;
 
     const performAutoLogout = async () => {
-      await signOut(auth);
+      await authService.signOut();
       setCurrentUser(null);
       setActiveTab('home');
       setAuthMode(null);
@@ -1016,39 +988,27 @@ export default function App() {
     }).format(number);
   };
 
-  // Auth Handlers
+  // Auth Handlers (Fully powered by Supabase Auth with Local Fallback)
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
       if (authMode === 'login') {
-        const cred = await signInWithEmailAndPassword(auth, authForm.email, authForm.password);
-        const userDoc = await getDoc(doc(db, 'users', cred.user.uid));
-        if (userDoc.exists()) {
-          setCurrentUser(userDoc.data() as UserType);
-          showToast(t.toastSuccessAuth);
-        } else {
-          throw new Error(t.toastErrorProfile);
-        }
+        const user = await authService.signIn(authForm.email, authForm.password);
+        setCurrentUser(user as UserType);
+        showToast(t.toastSuccessAuth);
       } else {
-        const { user } = await createUserWithEmailAndPassword(auth, authForm.email, authForm.password);
-        const newUser: UserType = {
-          uid: user.uid,
-          name: authForm.name,
-          email: authForm.email,
-          type: 'Store Manager'
-        };
-        await setDoc(doc(db, 'users', user.uid), newUser);
-        setCurrentUser(newUser);
+        const user = await authService.signUp(authForm.email, authForm.password, authForm.name);
+        setCurrentUser(user as UserType);
         showToast(t.toastSuccessReg);
       }
       setAuthMode(null);
       setAuthForm({ email: '', password: '', name: '', role: 'Store Manager' });
     } catch (err: any) {
-      let msg = err.message;
-      if (err.code === 'auth/email-already-in-use') msg = t.toastErrorEmailUsed;
-      if (err.code === 'auth/weak-password') msg = t.toastErrorWeakPass;
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') msg = t.toastErrorInvalid;
+      let msg = err.message || String(err);
+      if (msg.includes('already registered') || msg.includes('email-already-in-use')) msg = t.toastErrorEmailUsed;
+      if (msg.includes('should be at least') || msg.includes('weak-password')) msg = t.toastErrorWeakPass;
+      if (msg.includes('Invalid login') || msg.includes('invalid-credential') || msg.includes('wrong-password') || msg.includes('user-not-found')) msg = t.toastErrorInvalid;
       showToast(msg, true);
     } finally {
       setLoading(false);
@@ -1057,9 +1017,31 @@ export default function App() {
 
   const handleGoogleLogin = async () => {
     try {
-      await signInWithPopup(auth, googleProvider);
-      showToast("G-Login Berhasil!");
-      setAuthMode(null);
+      const { configured } = await loadAuthConfig();
+      if (configured) {
+        showToast(lang === 'id' ? "Menghubungkan ke Google..." : "Connecting to Google...");
+        const { createClient } = await import('@supabase/supabase-js');
+        const config = await (await fetch('/api/auth/config')).json();
+        const client = createClient(config.supabaseUrl, config.supabaseAnonKey);
+        await client.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin
+          }
+        });
+      } else {
+        // Local mode fallback
+        const mockUserObj: UserType = {
+          uid: 'google-fahriz',
+          name: 'Super Manajemen',
+          email: 'fahrizpalderama.design@gmail.com',
+          type: 'Superadmin'
+        };
+        localStorage.setItem('local_auth_session', JSON.stringify(mockUserObj));
+        setCurrentUser(mockUserObj);
+        showToast(lang === 'id' ? "G-Login Berhasil (Simulasi)!" : "Google login succeeded (simulated)!");
+        setAuthMode(null);
+      }
     } catch (err: any) {
       showToast(err.message, true);
     }
@@ -1073,8 +1055,8 @@ export default function App() {
     }
     
     try {
-      await sendPasswordResetEmail(auth, targetEmail);
-      showToast(t.toastResetSent);
+      await authService.resetPassword(targetEmail);
+      showToast(authService.isConfigured() ? t.toastResetSent : "Simulasi: Email setel ulang kata sandi dikirim ke " + targetEmail);
     } catch (err: any) {
       showToast(err.message, true);
     }
@@ -1082,7 +1064,7 @@ export default function App() {
 
   const handleLogout = async () => {
     openConfirm(t.logout, t.logoutConfirm, async () => {
-      await signOut(auth);
+      await authService.signOut();
       setCurrentUser(null);
       setActiveTab('home');
       setAuthMode(null);

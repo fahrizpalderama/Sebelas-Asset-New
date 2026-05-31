@@ -100,6 +100,14 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Safe API endpoint to expose public Supabase configuration configuration to the browser (NEVER exposes Service Role Key)
+app.get("/api/auth/config", (req, res) => {
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "",
+    supabaseAnonKey: process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY || ""
+  });
+});
+
 // Dynamic Supabase Database Diagnostics Check
 app.get("/api/db-diagnostics", async (req, res) => {
   if (!supabaseClient) {
@@ -542,6 +550,14 @@ app.post("/api/db/:collection", async (req, res) => {
   const data = { ...req.body };
   delete data._id; // Remove legacy MongoDB identifier if present
 
+  // Sanitize users table to prevent PostgreSQL schema column matching errors
+  if (table === 'users') {
+    if (data.id === undefined && data.uid !== undefined) {
+      data.id = data.uid;
+    }
+    delete data.uid;
+  }
+
   if (table === 'test-connection') {
     return res.json({ success: true, id: 'check' });
   }
@@ -602,6 +618,11 @@ app.put("/api/db/:collection/:id", async (req, res) => {
   const updateData = { ...req.body };
   delete updateData._id;
   delete updateData.id;
+
+  // Sanitize users table to prevent PostgreSQL schema column matching errors
+  if (table === 'users') {
+    delete updateData.uid;
+  }
 
   if (table === 'test-connection') {
     return res.json({ success: true });
