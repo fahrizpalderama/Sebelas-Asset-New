@@ -2352,10 +2352,8 @@ export default function App() {
             className="w-full bg-white dark:bg-dark-card p-10 rounded-[48px] shadow-2xl relative z-10 border border-white"
           >
             <div className="text-center mb-10">
-              <div className="w-24 h-24 bg-gradient-primary rounded-[32px] flex items-center justify-center shadow-xl shadow-accent-purple/20 mx-auto mb-6 p-1">
-                <div className="w-full h-full bg-white dark:bg-dark-card rounded-[24px] flex items-center justify-center p-0.5 backdrop-blur-sm overflow-hidden">
-                  <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRT3HPi5oJMO5sRj1BwfuBsTVI0YsKJqEGy9w&s" alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                </div>
+              <div className="w-24 h-24 rounded-3xl overflow-hidden mx-auto mb-6 shadow-md">
+                <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRT3HPi5oJMO5sRj1BwfuBsTVI0YsKJqEGy9w&s" alt="Logo" className="w-full h-full object-cover rounded-3xl" referrerPolicy="no-referrer" />
               </div>
               <h1 className="text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight">{t.title}</h1>
               <p className="text-slate-400 text-sm mt-2 font-medium">{t.subtitle}</p>
